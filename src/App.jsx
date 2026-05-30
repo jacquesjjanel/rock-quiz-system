@@ -4,32 +4,25 @@ import { supabase } from './supabase.js'
 // ─── CONSTANTS ───────────────────────────────────────────────────
 const LETTERS = ['A','B','C','D']
 
-// ─── CLAUDE API ──────────────────────────────────────────────────
+// ─── CLAUDE API (via Supabase Edge Function proxy) ───────────────
 async function generateQuestions(b64, isPdf, count, topic) {
-  const prompt = `You are a rock engineering training expert. Read this project report and generate exactly ${count} multiple-choice quiz questions testing genuine technical understanding.
-${topic ? `Focus on: ${topic}` : ''}
-Rules: questions must be answerable from the report only; mix factual, interpretation, calculation, scenario types; 4 options each, one correct; include a 1–2 sentence explanation.
-Return ONLY valid JSON array, no markdown fences:
-[{"category":"short topic","question":"...?","options":["A","B","C","D"],"correct":0,"explanation":"..."}]`
+  const { data: { session } } = await supabase.auth.getSession()
+  if (!session) throw new Error('Not authenticated')
 
-  const messages = isPdf
-    ? [{ role:'user', content:[
-        { type:'document', source:{ type:'base64', media_type:'application/pdf', data:b64 }},
-        { type:'text', text:prompt }
-      ]}]
-    : [{ role:'user', content: prompt + '\n\nREPORT:\n' + atob(b64).substring(0,60000) }]
-
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
-    method:'POST',
-    headers:{ 'Content-Type':'application/json' },
-    body: JSON.stringify({ model:'claude-sonnet-4-20250514', max_tokens:4000, messages })
-  })
-  if (!res.ok) { const e = await res.json(); throw new Error(e.error?.message || 'API error') }
+  const res = await fetch(
+    'https://emycrfyusnbxbpldorkp.supabase.co/functions/v1/generate-questions',
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type':  'application/json',
+        'Authorization': 'Bearer ' + session.access_token,
+      },
+      body: JSON.stringify({ b64, isPdf, count, topic }),
+    }
+  )
   const data = await res.json()
-  const raw = data.content.map(b => b.text||'').join('')
-  const s = raw.indexOf('['), e2 = raw.lastIndexOf(']')
-  if (s===-1||e2===-1) throw new Error('No JSON in response')
-  return JSON.parse(raw.substring(s, e2+1))
+  if (!res.ok || data.error) throw new Error(data.error || 'Edge function error')
+  return data.questions
 }
 
 // ─── FILE UTILS ──────────────────────────────────────────────────
