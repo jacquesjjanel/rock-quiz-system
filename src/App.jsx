@@ -568,7 +568,7 @@ function Leaderboard() {
             color:tab===t?'var(--chalk)':'var(--dust)', fontFamily:'Syne,sans-serif', fontWeight:600,
             fontSize:'0.85rem', cursor:'pointer' }}
             onClick={() => setTab(t)}>
-            {t==='week'?`This week${week?` — ${week.title}`:'`}`:'All-time'}
+            {t==='week' ? (week ? 'This week — ' + week.title : 'This week') : 'All-time'}
           </button>
         ))}
       </div>
