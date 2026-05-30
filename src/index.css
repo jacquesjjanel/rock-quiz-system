@@ -1,0 +1,35 @@
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --rock:  #1a1a1a;
+  --stone: #2e2e2e;
+  --slate: #3d3d3d;
+  --seam:  #555;
+  --chalk: #f0ede8;
+  --dust:  #c8c4bc;
+  --ore:   #e8a020;
+  --safe:  #3ab87a;
+  --fault: #e05050;
+  --vein:  #4a9eff;
+  --r:     10px;
+  --r-lg:  16px;
+}
+
+body {
+  font-family: 'Syne', sans-serif;
+  background: var(--rock);
+  color: var(--chalk);
+  min-height: 100vh;
+}
+
+input, select, textarea, button {
+  font-family: 'Syne', sans-serif;
+  box-sizing: border-box;
+}
+
+input::placeholder, textarea::placeholder { color: var(--seam); }
+select option { background: var(--stone); }
+
+@keyframes spin    { to { transform: rotate(360deg); } }
+@keyframes fadeIn  { from { opacity:0; transform:translateY(-6px); } to { opacity:1; transform:none; } }
+@keyframes pulse   { from { opacity:1; } to { opacity:0.5; } }
