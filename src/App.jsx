@@ -860,12 +860,16 @@ function PdfViewer({ b64, onClose }) {
           </div>
         )}
         {!error && blobUrl && (
-          <iframe
-            src={blobUrl}
-            style={{ width:'100%', height:'100%', border:'none', display:'block' }}
-            title="Report"
-            sandbox="allow-same-origin"
-          />
+          <object
+            data={blobUrl}
+            type="application/pdf"
+            style={{ width:'100%', height:'100%', display:'block' }}
+          >
+            <p style={{ color:'var(--dust)', textAlign:'center', padding:'2rem', fontFamily:'monospace', fontSize:'0.85rem' }}>
+              Your browser cannot display PDFs inline.<br/>
+              <a href={blobUrl} style={{ color:'var(--vein)' }} onClick={e => e.preventDefault()}>PDF loaded but inline preview unavailable.</a>
+            </p>
+          </object>
         )}
       </div>
     </div>
