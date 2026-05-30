@@ -215,7 +215,7 @@ function Dashboard({ profile, setView, setViewingPdf, notify }) {
 
   useEffect(() => {
     Promise.all([
-      supabase.from('quiz_weeks').select('*').eq('is_active',true).order('week_number', { ascending:false }),
+      supabase.from('quiz_weeks').select('id,week_number,title,topic_hint,questions,is_active,deadline,pdf_path,created_at').eq('is_active',true).order('week_number', { ascending:false }),
       supabase.from('quiz_submissions').select('week_id').eq('user_id', profile?.id || '')
     ]).then(([{ data:w }, { data:s }]) => {
       setWeeks(w || [])
@@ -810,11 +810,17 @@ function ProfileView({ profile, setProfile, notify }) {
 // ════════════════════════════════════════════════════════════════
 function PdfViewer({ b64, onClose }) {
   const [blobUrl, setBlobUrl] = useState(null)
+  const [error,   setError]   = useState(null)
 
   useEffect(() => {
-    const url = b64ToBlobUrl(b64)
-    setBlobUrl(url)
-    return () => URL.revokeObjectURL(url)
+    try {
+      if (!b64 || b64.length < 10) { setError('No PDF data available for this report.'); return }
+      const url = b64ToBlobUrl(b64)
+      setBlobUrl(url)
+      return () => URL.revokeObjectURL(url)
+    } catch (e) {
+      setError('Could not load PDF: ' + e.message)
+    }
   }, [b64])
 
   useEffect(() => {
@@ -841,16 +847,29 @@ function PdfViewer({ b64, onClose }) {
           Close ✕
         </button>
       </div>
-      <div style={{ flex:1, position:'relative' }}>
-        {blobUrl
-          ? <>
-              <iframe src={blobUrl + '#toolbar=0&navpanes=0'} style={{ width:'100%', height:'100%', border:'none', display:'block' }} title="Report" sandbox="allow-same-origin allow-scripts" />
-              <div style={{ position:'absolute', inset:0, zIndex:2, cursor:'default', userSelect:'none', WebkitUserSelect:'none' }} onContextMenu={e=>e.preventDefault()} />
-            </>
-          : <div style={{ display:'flex', alignItems:'center', justifyContent:'center', height:'100%' }}>
-              <Spin size={36} />
-            </div>
-        }
+      <div style={{ flex:1, position:'relative', overflow:'hidden' }}>
+        {error && (
+          <div style={{ display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', height:'100%', gap:'1rem' }}>
+            <p style={{ color:'var(--fault)', fontFamily:'monospace', fontSize:'0.85rem', maxWidth:400, textAlign:'center' }}>{error}</p>
+            <Btn ghost onClick={onClose}>Close</Btn>
+          </div>
+        )}
+        {!error && !blobUrl && (
+          <div style={{ display:'flex', alignItems:'center', justifyContent:'center', height:'100%' }}>
+            <Spin size={36} />
+          </div>
+        )}
+        {!error && blobUrl && (
+          <>
+            <iframe
+              src={blobUrl}
+              style={{ width:'100%', height:'100%', border:'none', display:'block' }}
+              title="Report"
+            />
+            <div style={{ position:'absolute', inset:0, zIndex:2, cursor:'default', userSelect:'none', WebkitUserSelect:'none' }}
+              onContextMenu={e=>e.preventDefault()} />
+          </>
+        )}
       </div>
     </div>
   )
