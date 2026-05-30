@@ -129,8 +129,7 @@ function AuthScreen({ notify }) {
     <div style={{ minHeight:'100vh', display:'flex', alignItems:'center', justifyContent:'center', padding:'2rem' }}>
       <div style={{ width:'100%', maxWidth:400 }}>
         <div style={{ display:'flex', alignItems:'center', gap:12, marginBottom:'2rem', justifyContent:'center' }}>
-          <img src="/rock-quiz-system/Logo.jpg" alt="Company logo" style={{ width:40, height:40, objectFit:'contain', borderRadius:4 }} />
-          <h1 style={{ fontSize:'1.5rem', fontWeight:800, letterSpacing:'-0.02em' }}>Weekly Report Reading Challenge</h1>
+          <h1 style={{ fontSize:'1.5rem', fontWeight:800, letterSpacing:'-0.02em' }}>Middindi Consulting Weekly Report Reading Challenge</h1>
         </div>
 
         <div style={S.card}>
@@ -178,8 +177,7 @@ function TopNav({ profile, view, setView, onSignOut }) {
   return (
     <nav style={{ background:'var(--stone)', borderBottom:'1px solid var(--slate)', padding:'0 1.5rem', display:'flex', alignItems:'center', justifyContent:'space-between', height:56, gap:'1rem', flexWrap:'wrap' }}>
       <div style={{ display:'flex', alignItems:'center', gap:10 }}>
-        <img src="/rock-quiz-system/Logo.jpg" alt="Company logo" style={{ width:32, height:32, objectFit:'contain', borderRadius:4 }} />
-        <span style={{ fontWeight:800, fontSize:'0.95rem', letterSpacing:'-0.02em' }}>Weekly Report Reading Challenge</span>
+        <span style={{ fontWeight:800, fontSize:'0.95rem', letterSpacing:'-0.02em' }}>Middindi Consulting Weekly Report Reading Challenge</span>
       </div>
       <div style={{ display:'flex', alignItems:'center', gap:4, flexWrap:'wrap' }}>
         {navItems.map(n => (
