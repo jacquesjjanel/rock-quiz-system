@@ -866,7 +866,7 @@ function PdfViewer({ b64, onClose }) {
               style={{ width:'100%', height:'100%', border:'none', display:'block' }}
               title="Report"
             />
-            <div style={{ position:'absolute', inset:0, zIndex:2, cursor:'default', userSelect:'none', WebkitUserSelect:'none' }}
+            <div style={{ position:'absolute', inset:0, zIndex:2, cursor:'default', userSelect:'none', WebkitUserSelect:'none', pointerEvents:'none' }}
               onContextMenu={e=>e.preventDefault()} />
           </>
         )}
