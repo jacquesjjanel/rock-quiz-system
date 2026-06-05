@@ -54,10 +54,22 @@ export default function App() {
   const [notif,     setNotif]     = useState(null)
   const [viewingPdf,setViewingPdf]= useState(null)
 
-  // Auth listener
+  // Auth listener — intercept password recovery events
   useEffect(() => {
-    supabase.auth.getSession().then(({ data:{ session } }) => setSession(session))
-    const { data:{ subscription } } = supabase.auth.onAuthStateChange((_, s) => setSession(s))
+    supabase.auth.getSession().then(({ data:{ session } }) => {
+      // Check if arriving from a password reset link
+      const hash = window.location.hash
+      if (hash.includes('type=recovery') || hash.includes('type=magiclink')) {
+        setView('set-password')
+      }
+      setSession(session)
+    })
+    const { data:{ subscription } } = supabase.auth.onAuthStateChange((event, s) => {
+      if (event === 'PASSWORD_RECOVERY') {
+        setView('set-password')
+      }
+      setSession(s)
+    })
     return () => subscription.unsubscribe()
   }, [])
 
@@ -85,6 +97,7 @@ export default function App() {
         onSignOut={async () => { await supabase.auth.signOut(); setView('dashboard') }} />
 
       <div style={{ maxWidth:820, margin:'0 auto', padding:'2rem 1.5rem' }}>
+      {view === 'set-password' && <SetPasswordView notify={notify} onDone={() => setView('dashboard')} />}
         {view === 'dashboard'  && <Dashboard profile={profile} setView={setView} setViewingPdf={setViewingPdf} notify={notify} />}
         {view === 'quiz'       && <QuizView profile={profile} notify={notify} setView={setView} />}
         {view === 'leaderboard'&& <Leaderboard />}
@@ -105,6 +118,7 @@ function AuthScreen({ notify }) {
   const [name,     setName]     = useState('')
   const [loading,  setLoading]  = useState(false)
   const [err,      setErr]      = useState('')
+  const [resetSent,setResetSent]= useState(false)
 
   const submit = async () => {
     setErr(''); setLoading(true)
@@ -125,18 +139,29 @@ function AuthScreen({ notify }) {
     setLoading(false)
   }
 
+  const sendReset = async () => {
+    if (!email.trim()) { setErr('Enter your email address above first'); return }
+    setErr(''); setLoading(true)
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: window.location.origin + window.location.pathname
+    })
+    if (error) setErr(error.message)
+    else setResetSent(true)
+    setLoading(false)
+  }
+
   return (
     <div style={{ minHeight:'100vh', display:'flex', alignItems:'center', justifyContent:'center', padding:'2rem' }}>
       <div style={{ width:'100%', maxWidth:400 }}>
         <div style={{ display:'flex', alignItems:'center', gap:12, marginBottom:'2rem', justifyContent:'center' }}>
-          <h1 style={{ fontSize:'1.5rem', fontWeight:800, letterSpacing:'-0.02em' }}>Middindi Consulting Weekly Report Reading Challenge</h1>
+          <h1 style={{ fontSize:'1.5rem', fontWeight:800, letterSpacing:'-0.02em', textAlign:'center' }}>Middindi Consulting Weekly Report Reading Challenge</h1>
         </div>
 
         <div style={S.card}>
           <div style={{ display:'flex', gap:6, marginBottom:'1.5rem' }}>
             {['signin','signup'].map(m => (
               <button key={m} style={{ ...S.tab, ...(mode===m ? S.tabActive : {}) }}
-                onClick={() => { setMode(m); setErr('') }}>
+                onClick={() => { setMode(m); setErr(''); setResetSent(false) }}>
                 {m === 'signin' ? 'Sign in' : 'Create account'}
               </button>
             ))}
@@ -148,15 +173,46 @@ function AuthScreen({ notify }) {
           )}
           <Field label="Email" type="email" value={email} onChange={setEmail}
             placeholder="you@company.com" />
-          <Field label="Password" type="password" value={password} onChange={setPassword}
-            placeholder="Min 6 characters" onEnter={submit} />
+
+          {mode === 'signin' && !resetSent && (
+            <Field label="Password" type="password" value={password} onChange={setPassword}
+              placeholder="Your password" onEnter={submit} />
+          )}
+          {mode === 'signup' && (
+            <Field label="Password" type="password" value={password} onChange={setPassword}
+              placeholder="Min 6 characters" onEnter={submit} />
+          )}
 
           {err && <p style={{ color:'var(--fault)', fontSize:'0.82rem', marginBottom:'1rem' }}>{err}</p>}
 
-          <Btn primary onClick={submit} disabled={loading} style={{ width:'100%' }}>
-            {loading ? <><Spin /> {mode==='signin'?'Signing in…':'Creating account…'}</>
-                     : mode==='signin' ? 'Sign in' : 'Create account'}
-          </Btn>
+          {resetSent ? (
+            <div style={{ textAlign:'center', padding:'0.5rem 0' }}>
+              <p style={{ color:'var(--safe)', fontWeight:600, marginBottom:'0.5rem' }}>✓ Reset email sent</p>
+              <p style={{ color:'var(--dust)', fontSize:'0.82rem', marginBottom:'1rem', lineHeight:1.5 }}>
+                Check your inbox for a password reset link. Once reset, come back here to sign in.
+              </p>
+              <button style={{ background:'none', border:'none', color:'var(--ore)', fontSize:'0.82rem', cursor:'pointer', fontFamily:'Syne,sans-serif' }}
+                onClick={() => { setResetSent(false); setErr('') }}>
+                ← Back to sign in
+              </button>
+            </div>
+          ) : (
+            <>
+              <Btn primary onClick={submit} disabled={loading} style={{ width:'100%' }}>
+                {loading ? <><Spin /> {mode==='signin'?'Signing in…':'Creating account…'}</>
+                         : mode==='signin' ? 'Sign in' : 'Create account'}
+              </Btn>
+
+              {mode === 'signin' && (
+                <button onClick={sendReset} disabled={loading}
+                  style={{ background:'none', border:'none', color:'var(--dust)', fontSize:'0.82rem',
+                    cursor:'pointer', fontFamily:'Syne,sans-serif', marginTop:'0.875rem',
+                    width:'100%', textAlign:'center', textDecoration:'underline' }}>
+                  Forgot password?
+                </button>
+              )}
+            </>
+          )}
         </div>
       </div>
     </div>
@@ -932,6 +988,59 @@ function AdminPanel({ notify }) {
     </>
   )
 }
+
+// ════════════════════════════════════════════════════════════════
+// SET NEW PASSWORD VIEW  (arrived via reset link)
+// ════════════════════════════════════════════════════════════════
+function SetPasswordView({ notify, onDone }) {
+  const [password, setPassword] = useState('')
+  const [confirm,  setConfirm]  = useState('')
+  const [saving,   setSaving]   = useState(false)
+  const [err,      setErr]      = useState('')
+
+  const submit = async () => {
+    setErr('')
+    if (password.length < 6) { setErr('Password must be at least 6 characters'); return }
+    if (password !== confirm) { setErr('Passwords do not match'); return }
+    setSaving(true)
+    const { error } = await supabase.auth.updateUser({ password })
+    if (error) { setErr(error.message); setSaving(false); return }
+    // Clear the hash from the URL so refresh doesn't re-trigger this screen
+    window.history.replaceState(null, '', window.location.pathname)
+    notify('Password updated successfully — welcome!')
+    onDone()
+  }
+
+  return (
+    <div style={{ minHeight:'100vh', display:'flex', alignItems:'center', justifyContent:'center', padding:'2rem' }}>
+      <div style={{ width:'100%', maxWidth:400 }}>
+        <div style={{ textAlign:'center', marginBottom:'2rem' }}>
+          <div style={{ ...S.gem, width:48, height:48, margin:'0 auto 1rem' }} />
+          <h2 style={{ fontSize:'1.4rem', fontWeight:800, letterSpacing:'-0.02em', marginBottom:'0.5rem' }}>
+            Set your new password
+          </h2>
+          <p style={{ color:'var(--dust)', fontSize:'0.88rem', lineHeight:1.5 }}>
+            Choose a strong password to secure your account.
+          </p>
+        </div>
+
+        <div style={S.card}>
+          <Field label="New password" type="password" value={password}
+            onChange={setPassword} placeholder="Min 6 characters" />
+          <Field label="Confirm new password" type="password" value={confirm}
+            onChange={setConfirm} placeholder="Repeat your password" onEnter={submit} />
+
+          {err && <p style={{ color:'var(--fault)', fontSize:'0.82rem', marginBottom:'1rem' }}>{err}</p>}
+
+          <Btn primary onClick={submit} disabled={saving || !password || !confirm} style={{ width:'100%' }}>
+            {saving ? <><Spin /> Saving…</> : 'Set password & continue →'}
+          </Btn>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 
 // ════════════════════════════════════════════════════════════════
 // PROFILE VIEW
