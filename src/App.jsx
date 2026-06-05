@@ -938,8 +938,11 @@ function AdminPanel({ notify }) {
 // PROFILE VIEW
 // ════════════════════════════════════════════════════════════════
 function ProfileView({ profile, setProfile, notify }) {
-  const [name, setName] = useState(profile?.full_name || '')
-  const [saving, setSaving] = useState(false)
+  const [name,        setName]        = useState(profile?.full_name || '')
+  const [saving,      setSaving]      = useState(false)
+  const [newPassword, setNewPassword] = useState('')
+  const [confirmPw,   setConfirmPw]   = useState('')
+  const [savingPw,    setSavingPw]    = useState(false)
 
   const save = async () => {
     setSaving(true)
@@ -949,10 +952,20 @@ function ProfileView({ profile, setProfile, notify }) {
     setSaving(false)
   }
 
+  const changePassword = async () => {
+    if (newPassword.length < 6) { notify('Password must be at least 6 characters', 'err'); return }
+    if (newPassword !== confirmPw) { notify('Passwords do not match', 'err'); return }
+    setSavingPw(true)
+    const { error } = await supabase.auth.updateUser({ password: newPassword })
+    if (error) notify('Could not update password: ' + error.message, 'err')
+    else { notify('Password updated successfully'); setNewPassword(''); setConfirmPw('') }
+    setSavingPw(false)
+  }
+
   return (
     <>
       <SLabel>Your profile</SLabel>
-      <div style={{ ...S.card, maxWidth:440 }}>
+      <div style={{ ...S.card, maxWidth:440, marginBottom:'1.25rem' }}>
         <div style={{ display:'flex', alignItems:'center', gap:14, marginBottom:'1.5rem' }}>
           <Avatar name={profile?.full_name||'?'} size={52} />
           <div>
@@ -965,6 +978,15 @@ function ProfileView({ profile, setProfile, notify }) {
         <Field label="Display name" value={name} onChange={setName} placeholder="Your full name" />
         <Btn primary onClick={save} disabled={saving} style={{ marginTop:'1rem' }}>
           {saving ? <><Spin />Saving…</> : 'Save changes'}
+        </Btn>
+      </div>
+
+      <SLabel>Change password</SLabel>
+      <div style={{ ...S.card, maxWidth:440 }}>
+        <Field label="New password" type="password" value={newPassword} onChange={setNewPassword} placeholder="Min 6 characters" />
+        <Field label="Confirm new password" type="password" value={confirmPw} onChange={setConfirmPw} placeholder="Repeat new password" onEnter={changePassword} />
+        <Btn primary onClick={changePassword} disabled={savingPw || !newPassword || !confirmPw} style={{ marginTop:'0.5rem' }}>
+          {savingPw ? <><Spin />Updating…</> : 'Update password'}
         </Btn>
       </div>
     </>
