@@ -318,7 +318,6 @@ function Dashboard({ profile, setView, setViewingPdf, notify }) {
           </div>
         </>
       )}
-    <>
       {showExemptModal && currentWeek && (
         <ExemptionModal
           week={currentWeek}
