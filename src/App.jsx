@@ -209,15 +209,19 @@ function TopNav({ profile, view, setView, onSignOut }) {
 function Dashboard({ profile, setView, setViewingPdf, notify }) {
   const [weeks,       setWeeks]       = useState([])
   const [submissions, setSubmissions] = useState([])
+  const [exemptions,  setExemptions]  = useState([])
   const [loading,     setLoading]     = useState(true)
+  const [showExemptModal, setShowExemptModal] = useState(false)
 
   useEffect(() => {
     Promise.all([
       supabase.from('quiz_weeks').select('id,week_number,title,topic_hint,questions,is_active,deadline,pdf_path,created_at').eq('is_active',true).order('week_number', { ascending:false }),
-      supabase.from('quiz_submissions').select('week_id').eq('user_id', profile?.id || '')
-    ]).then(([{ data:w }, { data:s }]) => {
+      supabase.from('quiz_submissions').select('week_id').eq('user_id', profile?.id || ''),
+      supabase.from('quiz_exemptions').select('week_id,status').eq('user_id', profile?.id || '')
+    ]).then(([{ data:w }, { data:s }, { data:e }]) => {
       setWeeks(w || [])
       setSubmissions((s||[]).map(x => x.week_id))
+      setExemptions(e || [])
       setLoading(false)
     })
   }, [profile])
@@ -260,10 +264,24 @@ function Dashboard({ profile, setView, setViewingPdf, notify }) {
                     <EyeIcon /> Read report
                   </Btn>
                 )}
-                {done
-                  ? <span style={{ fontSize:'0.82rem', color:'var(--safe)', fontWeight:700, display:'flex', alignItems:'center', gap:6 }}>✓ Submitted</span>
-                  : <Btn primary onClick={() => setView('quiz')}>Start quiz →</Btn>
-                }
+                {(() => {
+                  const ex = exemptions.find(e => e.week_id === currentWeek.id)
+                  if (done) return <span style={{ fontSize:'0.82rem', color:'var(--safe)', fontWeight:700, display:'flex', alignItems:'center', gap:6 }}>✓ Submitted</span>
+                  if (ex?.status === 'approved') return <span style={{ fontSize:'0.82rem', color:'var(--vein)', fontWeight:700 }}>✓ Exempted</span>
+                  if (ex?.status === 'pending')  return <span style={{ fontSize:'0.82rem', color:'var(--ore)', fontWeight:700 }}>⏳ Exemption pending</span>
+                  if (ex?.status === 'rejected') return (
+                    <div style={{ display:'flex', gap:8, alignItems:'center' }}>
+                      <span style={{ fontSize:'0.78rem', color:'var(--fault)' }}>✗ Exemption rejected</span>
+                      <Btn primary onClick={() => setView('quiz')}>Start quiz →</Btn>
+                    </div>
+                  )
+                  return (
+                    <div style={{ display:'flex', gap:8, alignItems:'center' }}>
+                      <Btn ghost sm onClick={() => setShowExemptModal(true)}>Request exemption</Btn>
+                      <Btn primary onClick={() => setView('quiz')}>Start quiz →</Btn>
+                    </div>
+                  )
+                })()}
               </div>
             </div>
           </div>
@@ -299,6 +317,18 @@ function Dashboard({ profile, setView, setViewingPdf, notify }) {
             })}
           </div>
         </>
+      )}
+    <>
+      {showExemptModal && currentWeek && (
+        <ExemptionModal
+          week={currentWeek}
+          profile={profile}
+          onClose={() => setShowExemptModal(false)}
+          onSubmitted={() => {
+            setShowExemptModal(false)
+            setExemptions(prev => [...prev.filter(e => e.week_id !== currentWeek.id), { week_id: currentWeek.id, status:'pending' }])
+          }}
+        />
       )}
     </>
   )
@@ -512,10 +542,11 @@ function ResultsView({ answers, questions, score, onDashboard, onLeaderboard }) 
 // LEADERBOARD
 // ════════════════════════════════════════════════════════════════
 function Leaderboard() {
-  const [tab,  setTab]  = useState('week')
-  const [data, setData] = useState([])
-  const [week, setWeek] = useState(null)
-  const [loading, setLoading] = useState(true)
+  const [tab,      setTab]     = useState('week')
+  const [data,     setData]    = useState([])
+  const [week,     setWeek]    = useState(null)
+  const [exempted, setExempted]= useState([])
+  const [loading,  setLoading] = useState(true)
 
   useEffect(() => {
     (async () => {
@@ -524,10 +555,16 @@ function Leaderboard() {
         .order('week_number',{ ascending:false }).limit(1).single()
       setWeek(w)
 
-      const { data:subs } = await supabase.from('quiz_submissions')
-        .select('user_id,week_id,score,total,submitted_at,profiles(full_name)')
-        .order('submitted_at',{ ascending:false })
+      const [{ data:subs }, { data:exs }] = await Promise.all([
+        supabase.from('quiz_submissions')
+          .select('user_id,week_id,score,total,submitted_at,profiles(full_name)')
+          .order('submitted_at',{ ascending:false }),
+        supabase.from('quiz_exemptions')
+          .select('id,user_id,week_id,reason,status,profiles(full_name)')
+          .eq('status','approved')
+      ])
       setData(subs || [])
+      setExempted(exs || [])
       setLoading(false)
     })()
   }, [])
@@ -536,6 +573,7 @@ function Leaderboard() {
 
   const weekSubs = week ? data.filter(s => s.week_id===week.id)
     .sort((a,b) => b.score-a.score || new Date(a.submitted_at)-new Date(b.submitted_at)) : []
+  const exemptedThisWeek = week ? exempted.filter(e => e.week_id===week.id) : []
 
   // All-time: sum scores per user
   const allTime = Object.values(
@@ -568,6 +606,18 @@ function Leaderboard() {
         weekSubs.length===0
           ? <p style={{ color:'var(--dust)', textAlign:'center', padding:'2rem' }}>No submissions this week yet.</p>
           : <div style={{ display:'flex', flexDirection:'column', gap:'0.625rem' }}>
+              {exemptedThisWeek.map(ex => (
+                <div key={ex.id} style={{ display:'flex', alignItems:'center', gap:12, padding:'12px 16px',
+                  background:'var(--stone)', border:'1px solid var(--vein-dim,#1a4a80)', borderRadius:10, opacity:0.7 }}>
+                  <span style={{ fontSize:'1.1rem', fontWeight:800, color:'var(--dust)', minWidth:24, textAlign:'center' }}>—</span>
+                  <Avatar name={ex.profiles?.full_name||'?'} size={36} />
+                  <div style={{ flex:1 }}>
+                    <p style={{ fontWeight:600, color:'var(--chalk)', margin:0 }}>{ex.profiles?.full_name}</p>
+                    <p style={{ fontSize:'0.75rem', color:'var(--dust)', fontFamily:'monospace', margin:0 }}>{ex.reason}</p>
+                  </div>
+                  <span style={{ fontSize:'0.78rem', color:'var(--vein)', fontWeight:700, fontFamily:'monospace' }}>Exempted</span>
+                </div>
+              ))}
               {weekSubs.map((s,i) => (
                 <div key={s.user_id} style={{ display:'flex', alignItems:'center', gap:12, padding:'12px 16px',
                   background:'var(--stone)', border:'1px solid', borderColor:i===0?'var(--ore)':'var(--slate)', borderRadius:10 }}>
@@ -614,6 +664,75 @@ function Leaderboard() {
     </>
   )
 }
+
+// ════════════════════════════════════════════════════════════════
+// EXEMPTION REQUEST MODAL
+// ════════════════════════════════════════════════════════════════
+function ExemptionModal({ week, profile, onClose, onSubmitted }) {
+  const [reason,  setReason]  = useState('')
+  const [saving,  setSaving]  = useState(false)
+  const [err,     setErr]     = useState('')
+
+  const REASONS = ['Site visit / fieldwork', 'Annual leave', 'Sick leave', 'Training / conference', 'Other']
+
+  const submit = async () => {
+    if (!reason.trim()) { setErr('Please select or enter a reason'); return }
+    setSaving(true)
+    const { error } = await supabase.from('quiz_exemptions').insert({
+      user_id: profile.id,
+      week_id: week.id,
+      reason: reason.trim()
+    })
+    if (error) { setErr(error.message); setSaving(false); return }
+    onSubmitted()
+  }
+
+  return (
+    <div style={{ position:'fixed', inset:0, zIndex:500, background:'rgba(0,0,0,0.7)', display:'flex', alignItems:'center', justifyContent:'center', padding:'1rem' }}>
+      <div style={{ ...S.card, width:'100%', maxWidth:440, margin:0 }}>
+        <h3 style={{ fontWeight:700, fontSize:'1rem', marginBottom:'0.25rem' }}>Request exemption</h3>
+        <p style={{ color:'var(--dust)', fontSize:'0.82rem', marginBottom:'1.25rem' }}>
+          Week {week.week_number} — {week.title}
+        </p>
+
+        <label style={S.lbl}>Reason for exemption</label>
+        <div style={{ display:'flex', flexDirection:'column', gap:6, marginBottom:'1rem' }}>
+          {REASONS.map(r => (
+            <button key={r} onClick={() => setReason(r)}
+              style={{ textAlign:'left', padding:'10px 14px', borderRadius:8, border:'1px solid',
+                borderColor: reason===r ? 'var(--ore)' : 'var(--slate)',
+                background: reason===r ? 'rgba(232,160,32,0.1)' : 'var(--rock)',
+                color: reason===r ? 'var(--ore)' : 'var(--chalk)',
+                fontFamily:'Syne,sans-serif', fontSize:'0.88rem', cursor:'pointer', fontWeight: reason===r ? 700 : 400 }}>
+              {r}
+            </button>
+          ))}
+        </div>
+
+        {reason === 'Other' && (
+          <div style={{ marginBottom:'1rem' }}>
+            <label style={S.lbl}>Please describe</label>
+            <textarea
+              style={{ ...S.input, minHeight:72, resize:'vertical', fontFamily:'Syne,sans-serif' }}
+              placeholder="Briefly explain your reason…"
+              onChange={e => setReason(e.target.value === '' ? 'Other' : e.target.value)}
+            />
+          </div>
+        )}
+
+        {err && <p style={{ color:'var(--fault)', fontSize:'0.82rem', marginBottom:'0.75rem' }}>{err}</p>}
+
+        <div style={{ display:'flex', gap:'0.75rem', marginTop:'0.5rem' }}>
+          <Btn ghost onClick={onClose} disabled={saving}>Cancel</Btn>
+          <Btn primary onClick={submit} disabled={saving || !reason || reason === 'Other'} style={{ flex:1 }}>
+            {saving ? <><Spin /> Submitting…</> : 'Submit request'}
+          </Btn>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 
 // ════════════════════════════════════════════════════════════════
 // ADMIN PANEL
@@ -680,9 +799,58 @@ function AdminPanel({ notify }) {
     loadWeeks()
   }
 
+  const [exemptions,    setExemptions]    = useState([])
+  const [loadingEx,     setLoadingEx]     = useState(true)
+
+  const loadExemptions = async () => {
+    const { data } = await supabase.from('quiz_exemptions')
+      .select('id,reason,status,requested_at,admin_note,user_id,week_id,profiles(full_name),quiz_weeks(week_number,title)')
+      .order('requested_at', { ascending:false })
+    setExemptions(data || [])
+    setLoadingEx(false)
+  }
+  useEffect(() => { loadExemptions() }, [])
+
+  const reviewExemption = async (id, status, note='') => {
+    const { data:{ user } } = await supabase.auth.getUser()
+    await supabase.from('quiz_exemptions').update({
+      status, admin_note: note || null,
+      reviewed_at: new Date().toISOString(),
+      reviewed_by: user.id
+    }).eq('id', id)
+    loadExemptions()
+    notify(status === 'approved' ? 'Exemption approved' : 'Exemption rejected')
+  }
+
+  const pending = exemptions.filter(e => e.status === 'pending')
+
   return (
     <>
       <SLabel>Admin panel</SLabel>
+
+      {/* Exemption requests */}
+      {pending.length > 0 && (
+        <div style={{ ...S.card, borderColor:'var(--ore)', marginBottom:'2rem' }}>
+          <p style={{ fontSize:'0.72rem', fontWeight:700, color:'var(--ore)', letterSpacing:'0.1em', textTransform:'uppercase', marginBottom:'1rem' }}>
+            ⚠ Exemption requests — {pending.length} pending
+          </p>
+          {pending.map(ex => (
+            <div key={ex.id} style={{ padding:'12px 0', borderBottom:'1px solid var(--slate)', display:'flex', alignItems:'flex-start', gap:'1rem', flexWrap:'wrap' }}>
+              <div style={{ flex:1 }}>
+                <p style={{ fontWeight:600, color:'var(--chalk)', margin:'0 0 2px' }}>{ex.profiles?.full_name}</p>
+                <p style={{ fontSize:'0.78rem', color:'var(--dust)', fontFamily:'monospace', margin:'0 0 4px' }}>
+                  Week {ex.quiz_weeks?.week_number} — {ex.quiz_weeks?.title}
+                </p>
+                <p style={{ fontSize:'0.85rem', color:'var(--chalk)', margin:0 }}>{ex.reason}</p>
+              </div>
+              <div style={{ display:'flex', gap:8 }}>
+                <Btn ghost sm onClick={() => reviewExemption(ex.id, 'rejected')}>Reject</Btn>
+                <Btn primary sm onClick={() => reviewExemption(ex.id, 'approved')}>Approve</Btn>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Upload new week */}
       <div style={{ ...S.card, marginBottom:'2rem' }}>
