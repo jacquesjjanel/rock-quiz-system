@@ -322,9 +322,16 @@ function Dashboard({ profile, setView, setViewingPdf, notify }) {
                 )}
                 {(() => {
                   const ex = exemptions.find(e => e.week_id === currentWeek.id)
+                  const isPastDeadline = currentWeek.deadline && new Date() > new Date(currentWeek.deadline)
                   if (done) return <span style={{ fontSize:'0.82rem', color:'var(--safe)', fontWeight:700, display:'flex', alignItems:'center', gap:6 }}>✓ Submitted</span>
                   if (ex?.status === 'approved') return <span style={{ fontSize:'0.82rem', color:'var(--vein)', fontWeight:700 }}>✓ Exempted</span>
                   if (ex?.status === 'pending')  return <span style={{ fontSize:'0.82rem', color:'var(--ore)', fontWeight:700 }}>⏳ Exemption pending</span>
+                  if (isPastDeadline) return (
+                    <div style={{ display:'flex', flexDirection:'column', alignItems:'flex-end', gap:4 }}>
+                      <span style={{ fontSize:'0.82rem', color:'var(--fault)', fontWeight:700 }}>⏰ Deadline passed</span>
+                      {ex?.status === 'rejected' && <span style={{ fontSize:'0.75rem', color:'var(--fault)' }}>Exemption rejected</span>}
+                    </div>
+                  )
                   if (ex?.status === 'rejected') return (
                     <div style={{ display:'flex', gap:8, alignItems:'center' }}>
                       <span style={{ fontSize:'0.78rem', color:'var(--fault)' }}>✗ Exemption rejected</span>
@@ -398,7 +405,7 @@ function QuizView({ profile, notify, setView }) {
   const [revealed,   setRevealed]   = useState(false)
   const [selected,   setSelected]   = useState(null)
   const [answers,    setAnswers]    = useState([])
-  const [phase,      setPhase]      = useState('loading') // loading|already-done|question|done
+  const [phase,      setPhase]      = useState('loading')
   const [timeLeft,   setTimeLeft]   = useState(null)
   const timerRef = useRef(null)
 
@@ -408,12 +415,37 @@ function QuizView({ profile, notify, setView }) {
         .select('*').eq('is_active',true).order('week_number',{ ascending:false }).limit(1).single()
       if (!w) { setPhase('no-week'); return }
       setWeek(w)
+      // Check deadline
+      if (w.deadline && new Date() > new Date(w.deadline)) { setPhase('deadline-passed'); return }
       // Check if already submitted
       const { data:sub } = await supabase.from('quiz_submissions')
         .select('id').eq('user_id', profile.id).eq('week_id', w.id).maybeSingle()
-      setPhase(sub ? 'already-done' : 'question')
+      if (sub) { setPhase('already-done'); return }
+      // Restore any saved progress
+      const { data:prog } = await supabase.from('quiz_progress')
+        .select('q_index,answers').eq('user_id', profile.id).eq('week_id', w.id).maybeSingle()
+      if (prog) {
+        setQIndex(prog.q_index)
+        setAnswers(prog.answers || [])
+      }
+      setPhase('question')
     })()
   }, [profile])
+
+  // Save progress after each answered question
+  const saveProgress = async (weekId, newQIndex, newAnswers) => {
+    await supabase.from('quiz_progress').upsert({
+      user_id: profile.id, week_id: weekId,
+      q_index: newQIndex, answers: newAnswers,
+      updated_at: new Date().toISOString()
+    }, { onConflict:'user_id,week_id' })
+  }
+
+  // Clear progress once submitted
+  const clearProgress = async (weekId) => {
+    await supabase.from('quiz_progress').delete()
+      .eq('user_id', profile.id).eq('week_id', weekId)
+  }
 
   // Timer per question (60s)
   useEffect(() => {
@@ -439,28 +471,36 @@ function QuizView({ profile, notify, setView }) {
   const next = async () => {
     const q = week.questions[qIndex]
     const newAnswers = [...answers, { qIdx:qIndex, chosen:selected, correct: selected===q.correct }]
-    if (qIndex + 1 >= week.questions.length) {
-      // Save to Supabase
+    const nextIndex = qIndex + 1
+    if (nextIndex >= week.questions.length) {
+      // Final submission — save score and clear progress
       const score = newAnswers.filter(a=>a.correct).length
       const { error } = await supabase.from('quiz_submissions').upsert({
         user_id: profile.id, week_id: week.id,
         answers: newAnswers, score, total: week.questions.length
       }, { onConflict:'user_id,week_id' })
       if (error) notify('Could not save score: ' + error.message, 'err')
-      else notify(`Submitted! ${score}/${week.questions.length} correct`)
+      else {
+        notify(`Submitted! ${score}/${week.questions.length} correct`)
+        await clearProgress(week.id)
+      }
       setAnswers(newAnswers)
       setPhase('done')
     } else {
-      setAnswers(newAnswers)
-      setQIndex(i => i+1)
+      // Save progress and move to next question
+      const newAnswersArr = newAnswers
+      setAnswers(newAnswersArr)
+      setQIndex(nextIndex)
       setRevealed(false)
       setSelected(null)
+      await saveProgress(week.id, nextIndex, newAnswersArr)
     }
   }
 
   if (phase === 'loading') return <Loader text="Loading quiz…" inline />
   if (phase === 'no-week')     return <EmptyState text="No quiz available yet." onBack={() => setView('dashboard')} />
-  if (phase === 'already-done') return <AlreadyDone onLeaderboard={() => setView('leaderboard')} onDashboard={() => setView('dashboard')} />
+  if (phase === 'already-done')   return <AlreadyDone onLeaderboard={() => setView('leaderboard')} onDashboard={() => setView('dashboard')} />
+  if (phase === 'deadline-passed') return <DeadlinePassed week={week} onDashboard={() => setView('dashboard')} />
 
   if (phase === 'done') {
     const score = answers.filter(a=>a.correct).length
@@ -556,6 +596,22 @@ function AlreadyDone({ onLeaderboard, onDashboard }) {
         <Btn ghost onClick={onDashboard}>Dashboard</Btn>
         <Btn primary onClick={onLeaderboard}>See leaderboard</Btn>
       </div>
+    </div>
+  )
+}
+
+function DeadlinePassed({ week, onDashboard }) {
+  return (
+    <div style={{ textAlign:'center', padding:'4rem 2rem', maxWidth:480, margin:'0 auto' }}>
+      <div style={{ fontSize:'3rem', marginBottom:'1rem' }}>⏰</div>
+      <h2 style={{ fontSize:'1.5rem', fontWeight:800, marginBottom:'0.5rem' }}>Deadline has passed</h2>
+      <p style={{ color:'var(--dust)', marginBottom:'0.5rem', lineHeight:1.6 }}>
+        The submission deadline for <strong style={{ color:'var(--chalk)' }}>Week {week?.week_number} — {week?.title}</strong> has passed.
+      </p>
+      <p style={{ color:'var(--dust)', fontSize:'0.85rem', marginBottom:'2rem', lineHeight:1.6 }}>
+        If you have a legitimate reason for missing it, contact your admin to request an extension.
+      </p>
+      <Btn primary onClick={onDashboard}>Back to dashboard</Btn>
     </div>
   )
 }
@@ -854,6 +910,16 @@ function AdminPanel({ notify }) {
     loadWeeks()
   }
 
+  const extendDeadline = async (id) => {
+    const input = prompt('Enter new deadline (YYYY-MM-DDTHH:MM) or leave blank to remove deadline:')
+    if (input === null) return // cancelled
+    const newDeadline = input.trim() === '' ? null : new Date(input).toISOString()
+    if (input.trim() !== '' && isNaN(new Date(input))) { notify('Invalid date format', 'err'); return }
+    await supabase.from('quiz_weeks').update({ deadline: newDeadline }).eq('id', id)
+    loadWeeks()
+    notify(newDeadline ? 'Deadline updated' : 'Deadline removed')
+  }
+
   const [exemptions,    setExemptions]    = useState([])
   const [loadingEx,     setLoadingEx]     = useState(true)
 
@@ -973,13 +1039,16 @@ function AdminPanel({ notify }) {
                 {w.deadline ? ` · Due ${new Date(w.deadline).toLocaleDateString('en-GB',{day:'numeric',month:'short'})}` : ''}
               </p>
             </div>
-            <div style={{ display:'flex', gap:8, alignItems:'center' }}>
+            <div style={{ display:'flex', gap:8, alignItems:'center', flexWrap:'wrap' }}>
               <button onClick={() => toggleActive(w.id, w.is_active)}
                 style={{ fontSize:'0.75rem', fontWeight:700, padding:'5px 12px', borderRadius:20, border:'1px solid',
                   borderColor: w.is_active?'var(--safe)':'var(--seam)',
                   color: w.is_active?'var(--safe)':'var(--seam)', background:'none', cursor:'pointer', fontFamily:'monospace' }}>
                 {w.is_active?'Active':'Hidden'}
               </button>
+              <Btn ghost sm onClick={() => extendDeadline(w.id)}>
+                {w.deadline && new Date() > new Date(w.deadline) ? '⏰ Extend deadline' : 'Edit deadline'}
+              </Btn>
               <Btn ghost sm danger onClick={() => deleteWeek(w.id)}>Delete</Btn>
             </div>
           </div>
