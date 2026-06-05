@@ -415,10 +415,10 @@ function QuizView({ profile, notify, setView }) {
     })()
   }, [profile])
 
-  // Timer per question (30s)
+  // Timer per question (60s)
   useEffect(() => {
     if (phase !== 'question' || revealed) return
-    setTimeLeft(30)
+    setTimeLeft(60)
     clearInterval(timerRef.current)
     timerRef.current = setInterval(() => {
       setTimeLeft(t => {
