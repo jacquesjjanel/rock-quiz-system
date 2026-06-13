@@ -25,7 +25,27 @@ async function generateQuestions(b64, isPdf, count, topic) {
   return data.questions
 }
 
-// ─── FILE UTILS ──────────────────────────────────────────────────
+// ─── SCORING ─────────────────────────────────────────────────────
+// Max 600 pts: 500 accuracy (100 per correct answer, 5 questions)
+//            + 100 speed bonus tapering by submission order
+const SPEED_BONUSES = [100, 85, 70, 60, 50, 40, 30, 20, 15, 10]
+const DEFAULT_SPEED_BONUS = 10
+
+function calcAccuracyPoints(score, total) {
+  if (!total) return 0
+  return score * 100  // 100 points per correct answer
+}
+
+function calcSpeedBonus(submissionRank) {
+  // rank is 1-based (1 = first to submit)
+  return SPEED_BONUSES[submissionRank - 1] ?? DEFAULT_SPEED_BONUS
+}
+
+function calcTotalPoints(accuracyPts, speedBonus) {
+  return accuracyPts + speedBonus
+}
+
+// ─── FILE UTILS ────────────────────────────────────────────────────
 function readAsBase64(file) {
   return new Promise((res,rej) => {
     const r = new FileReader()
@@ -405,8 +425,10 @@ function QuizView({ profile, notify, setView }) {
   const [revealed,   setRevealed]   = useState(false)
   const [selected,   setSelected]   = useState(null)
   const [answers,    setAnswers]    = useState([])
-  const [phase,      setPhase]      = useState('loading')
-  const [timeLeft,   setTimeLeft]   = useState(null)
+  const [phase,        setPhase]        = useState('loading')
+  const [timeLeft,     setTimeLeft]     = useState(null)
+  const [savedPoints,  setSavedPoints]  = useState(0)
+  const [savedSpeedBonus, setSavedSpeedBonus] = useState(0)
   const timerRef = useRef(null)
 
   useEffect(() => {
@@ -475,13 +497,25 @@ function QuizView({ profile, notify, setView }) {
     if (nextIndex >= week.questions.length) {
       // Final submission — save score and clear progress
       const score = newAnswers.filter(a=>a.correct).length
+      // Calculate accuracy points
+      const accuracyPts = calcAccuracyPoints(score, week.questions.length)
+      // Get submission rank for this week to calculate speed bonus
+      const { data: priorSubs } = await supabase.from('quiz_submissions')
+        .select('id').eq('week_id', week.id)
+      const rank = (priorSubs?.length || 0) + 1
+      const speedBonus = calcSpeedBonus(rank)
+      const totalPoints = calcTotalPoints(accuracyPts, speedBonus)
+
       const { error } = await supabase.from('quiz_submissions').upsert({
         user_id: profile.id, week_id: week.id,
-        answers: newAnswers, score, total: week.questions.length
+        answers: newAnswers, score, total: week.questions.length,
+        accuracy_points: accuracyPts, speed_bonus: speedBonus, total_points: totalPoints
       }, { onConflict:'user_id,week_id' })
       if (error) notify('Could not save score: ' + error.message, 'err')
       else {
-        notify(`Submitted! ${score}/${week.questions.length} correct`)
+        notify(`Submitted! ${score}/${week.questions.length} correct · ${totalPoints} pts`)
+        setSavedPoints(totalPoints)
+        setSavedSpeedBonus(speedBonus)
         await clearProgress(week.id)
       }
       setAnswers(newAnswers)
@@ -504,7 +538,11 @@ function QuizView({ profile, notify, setView }) {
 
   if (phase === 'done') {
     const score = answers.filter(a=>a.correct).length
+    const ap = calcAccuracyPoints(score, week.questions.length)
     return <ResultsView answers={answers} questions={week.questions} score={score}
+      totalPoints={savedPoints || calcTotalPoints(ap, calcSpeedBonus(1))}
+      accuracyPts={ap}
+      speedBonus={savedSpeedBonus || calcSpeedBonus(1)}
       onDashboard={() => setView('dashboard')} onLeaderboard={() => setView('leaderboard')} />
   }
 
@@ -616,17 +654,37 @@ function DeadlinePassed({ week, onDashboard }) {
   )
 }
 
-function ResultsView({ answers, questions, score, onDashboard, onLeaderboard }) {
+function ResultsView({ answers, questions, score, totalPoints, accuracyPts, speedBonus, onDashboard, onLeaderboard }) {
   const pct = Math.round(score/questions.length*100)
   const msg = pct===100?'Perfect score!':pct>=70?'Well done!':pct>=50?'Good effort!':'Keep practising!'
   return (
     <div style={{ maxWidth:600, margin:'0 auto' }}>
       <div style={{ ...S.gem, width:52, height:52, margin:'0 auto 1.25rem' }} />
       <h2 style={{ fontSize:'2rem', fontWeight:800, textAlign:'center', marginBottom:'0.5rem' }}>{msg}</h2>
-      <div style={{ width:120, height:120, borderRadius:'50%', border:'2.5px solid var(--ore)',
-        display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', margin:'0 auto 2rem' }}>
-        <span style={{ fontSize:'2.25rem', fontWeight:800, color:'var(--ore)', lineHeight:1 }}>{score}</span>
-        <span style={{ fontSize:'0.78rem', color:'var(--dust)', fontFamily:'monospace' }}>of {questions.length}</span>
+      <div style={{ display:'flex', gap:'1rem', justifyContent:'center', marginBottom:'2rem', flexWrap:'wrap' }}>
+        <div style={{ width:120, height:120, borderRadius:'50%', border:'2.5px solid var(--ore)',
+          display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center' }}>
+          <span style={{ fontSize:'2.25rem', fontWeight:800, color:'var(--ore)', lineHeight:1 }}>{score}</span>
+          <span style={{ fontSize:'0.78rem', color:'var(--dust)', fontFamily:'monospace' }}>of {questions.length}</span>
+        </div>
+        {totalPoints > 0 && (
+          <div style={{ display:'flex', flexDirection:'column', justifyContent:'center', gap:6 }}>
+            <div style={{ background:'var(--stone)', border:'1px solid var(--slate)', borderRadius:10, padding:'8px 16px', textAlign:'center' }}>
+              <p style={{ fontSize:'1.5rem', fontWeight:800, color:'var(--ore)', margin:0, lineHeight:1 }}>{totalPoints}</p>
+              <p style={{ fontSize:'0.72rem', color:'var(--dust)', fontFamily:'monospace', margin:'2px 0 0' }}>total points</p>
+            </div>
+            <div style={{ display:'flex', gap:6 }}>
+              <div style={{ flex:1, background:'var(--stone)', border:'1px solid var(--slate)', borderRadius:8, padding:'6px 10px', textAlign:'center' }}>
+                <p style={{ fontSize:'1rem', fontWeight:700, color:'var(--chalk)', margin:0 }}>{accuracyPts}</p>
+                <p style={{ fontSize:'0.68rem', color:'var(--dust)', fontFamily:'monospace', margin:0 }}>accuracy</p>
+              </div>
+              <div style={{ flex:1, background:'var(--stone)', border:'1px solid var(--slate)', borderRadius:8, padding:'6px 10px', textAlign:'center' }}>
+                <p style={{ fontSize:'1rem', fontWeight:700, color:'var(--safe)', margin:0 }}>+{speedBonus}</p>
+                <p style={{ fontSize:'0.68rem', color:'var(--dust)', fontFamily:'monospace', margin:0 }}>speed</p>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
       <div style={{ marginBottom:'2rem' }}>
         {questions.map((q,i) => {
@@ -698,7 +756,7 @@ function Leaderboard() {
 
   const subsForWeek = (weekId) =>
     allSubs.filter(s => s.week_id === weekId)
-      .sort((a,b) => b.score - a.score || new Date(a.submitted_at) - new Date(b.submitted_at))
+      .sort((a,b) => (b.total_points||b.score) - (a.total_points||a.score))
 
   const exemptedForWeek = (weekId) =>
     exempted.filter(e => e.week_id === weekId)
@@ -707,7 +765,7 @@ function Leaderboard() {
     allSubs.reduce((acc, s) => {
       const name = s.full_name || 'Unknown'
       if (!acc[s.user_id]) acc[s.user_id] = { name, totalPts:0, weeks:0, perfects:0 }
-      acc[s.user_id].totalPts += s.score
+      acc[s.user_id].totalPts += (s.total_points || calcAccuracyPoints(s.score, s.total))
       acc[s.user_id].weeks++
       if (s.score === s.total) acc[s.user_id].perfects++
       return acc
@@ -765,8 +823,8 @@ function Leaderboard() {
                       <LbRow key={s.user_id} rank={i+1} name={s.full_name||'Unknown'}
                         sub={new Date(s.submitted_at).toLocaleDateString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}
                         right={<>
-                          <p style={{ fontWeight:700, fontSize:'1.2rem', color:s.score===s.total?'var(--safe)':'var(--chalk)', margin:0 }}>{s.score}/{s.total}</p>
-                          {s.score===s.total && <p style={{ fontSize:'0.7rem', color:'var(--safe)', fontFamily:'monospace', margin:0 }}>perfect</p>}
+                          <p style={{ fontWeight:700, fontSize:'1.2rem', color:'var(--ore)', margin:0 }}>{s.total_points || calcAccuracyPoints(s.score, s.total)}</p>
+                          <p style={{ fontSize:'0.7rem', color:'var(--dust)', fontFamily:'monospace', margin:0 }}>{s.score}/{s.total} correct</p>
                         </>}
                       />
                     ))}
@@ -810,8 +868,8 @@ function Leaderboard() {
                           <LbRow key={s.user_id} rank={i+1} name={s.full_name||'Unknown'}
                             sub={new Date(s.submitted_at).toLocaleDateString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}
                             right={<>
-                              <p style={{ fontWeight:700, fontSize:'1.2rem', color:s.score===s.total?'var(--safe)':'var(--chalk)', margin:0 }}>{s.score}/{s.total}</p>
-                              {s.score===s.total && <p style={{ fontSize:'0.7rem', color:'var(--safe)', fontFamily:'monospace', margin:0 }}>perfect</p>}
+                              <p style={{ fontWeight:700, fontSize:'1.2rem', color:'var(--ore)', margin:0 }}>{s.total_points || calcAccuracyPoints(s.score, s.total)}</p>
+                              <p style={{ fontSize:'0.7rem', color:'var(--dust)', fontFamily:'monospace', margin:0 }}>{s.score}/{s.total} correct</p>
                             </>}
                           />
                         ))}
@@ -926,7 +984,7 @@ function AdminPanel({ notify }) {
   const [file,       setFile]       = useState(null)
   const [title,      setTitle]      = useState('')
   const [hint,       setHint]       = useState('')
-  const [qCount,     setQCount]     = useState(7)
+  const [qCount,     setQCount]     = useState(5)
   const [deadline,   setDeadline]   = useState('')
   const [drag,       setDrag]       = useState(false)
   const fileRef = useRef(null)
