@@ -580,12 +580,10 @@ function QuizView({ profile, notify, setView }) {
         {q.options.map((opt,i) => {
           let extra = {}
           if (revealed) {
-            if (i===q.correct) extra = { background:'rgba(58,184,122,0.12)', borderColor:'var(--safe)' }
-            else if (i===selected) extra = { background:'rgba(224,80,80,0.08)', borderColor:'var(--fault)' }
+            if (i===selected) extra = { background:'rgba(74,158,255,0.08)', borderColor:'var(--vein)' }
             else extra = { opacity:0.4 }
           }
-          const lExtra = revealed && i===q.correct ? { background:'var(--safe)', color:'var(--rock)' }
-            : revealed && i===selected && i!==q.correct ? { background:'var(--fault)', color:'#fff' } : {}
+          const lExtra = revealed && i===selected ? { background:'var(--vein)', color:'#fff' } : {}
           return (
             <button key={i} onClick={() => selectAnswer(i)} disabled={revealed}
               style={{ background:'var(--stone)', border:'1.5px solid var(--slate)', borderRadius:12,
@@ -604,14 +602,7 @@ function QuizView({ profile, notify, setView }) {
         })}
       </div>
 
-      {revealed && q.explanation && (
-        <div style={{ background:'var(--stone)', border:'1px solid var(--slate)', borderLeft:'3px solid var(--ore)',
-          borderRadius:'0 8px 8px 0', padding:'0.875rem 1.125rem', fontSize:'0.85rem', color:'var(--dust)',
-          lineHeight:1.6, marginBottom:'1.5rem' }}>
-          <strong style={{ color:'var(--chalk)' }}>Why {LETTERS[q.correct]} is correct: </strong>
-          {q.explanation}
-        </div>
-      )}
+
 
       {revealed && (
         <div style={{ display:'flex', justifyContent:'center' }}>
@@ -731,13 +722,17 @@ function Leaderboard() {
           .select('id,user_id,week_id,reason')
           .eq('status','approved'),
         supabase.from('profiles')
-          .select('id,full_name')
+          .select('id,full_name,is_hidden')
       ])
       // Build a profile lookup map
-      const profileMap = (profs || []).reduce((acc, p) => { acc[p.id] = p.full_name; return acc }, {})
+      const profileMap = (profs || []).reduce((acc, p) => { acc[p.id] = { name: p.full_name, hidden: p.is_hidden }; return acc }, {})
       // Attach full_name to submissions and exemptions
-      const enrichedSubs = (subs || []).map(s => ({ ...s, full_name: profileMap[s.user_id] || 'Unknown' }))
-      const enrichedExs  = (exs  || []).map(e => ({ ...e, full_name: profileMap[e.user_id] || 'Unknown' }))
+      const enrichedSubs = (subs || [])
+        .filter(s => !profileMap[s.user_id]?.hidden)
+        .map(s => ({ ...s, full_name: profileMap[s.user_id]?.name || 'Unknown' }))
+      const enrichedExs  = (exs  || [])
+        .filter(e => !profileMap[e.user_id]?.hidden)
+        .map(e => ({ ...e, full_name: profileMap[e.user_id]?.name || 'Unknown' }))
       setAllWeeks(weeks || [])
       setAllSubs(enrichedSubs)
       setExempted(enrichedExs)
