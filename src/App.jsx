@@ -661,15 +661,17 @@ function Leaderboard() {
 
   useEffect(() => {
     (async () => {
-      const { data:w } = await supabase.from('quiz_weeks')
+      // Fetch most recent active week
+      const { data:weeks } = await supabase.from('quiz_weeks')
         .select('id,week_number,title').eq('is_active',true)
-        .order('week_number',{ ascending:false }).limit(1).single()
-      setWeek(w)
+        .order('week_number',{ ascending:false }).limit(1)
+      const currentWeek = weeks?.[0] || null
+      setWeek(currentWeek)
 
       const [{ data:subs }, { data:exs }] = await Promise.all([
         supabase.from('quiz_submissions')
           .select('user_id,week_id,score,total,submitted_at,profiles(full_name)')
-          .order('submitted_at',{ ascending:false }),
+          .order('score',{ ascending:false }),
         supabase.from('quiz_exemptions')
           .select('id,user_id,week_id,reason,status,profiles(full_name)')
           .eq('status','approved')
