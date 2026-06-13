@@ -662,20 +662,27 @@ function Leaderboard() {
 
   useEffect(() => {
     (async () => {
-      const [{ data:weeks }, { data:subs }, { data:exs }] = await Promise.all([
+      const [{ data:weeks }, { data:subs }, { data:exs }, { data:profs }] = await Promise.all([
         supabase.from('quiz_weeks')
           .select('id,week_number,title,is_active')
           .order('week_number', { ascending:false }),
         supabase.from('quiz_submissions')
-          .select('user_id,week_id,score,total,submitted_at,profiles(full_name)')
+          .select('user_id,week_id,score,total,submitted_at')
           .order('score', { ascending:false }),
         supabase.from('quiz_exemptions')
-          .select('id,user_id,week_id,reason,profiles(full_name)')
-          .eq('status','approved')
+          .select('id,user_id,week_id,reason')
+          .eq('status','approved'),
+        supabase.from('profiles')
+          .select('id,full_name')
       ])
+      // Build a profile lookup map
+      const profileMap = (profs || []).reduce((acc, p) => { acc[p.id] = p.full_name; return acc }, {})
+      // Attach full_name to submissions and exemptions
+      const enrichedSubs = (subs || []).map(s => ({ ...s, full_name: profileMap[s.user_id] || 'Unknown' }))
+      const enrichedExs  = (exs  || []).map(e => ({ ...e, full_name: profileMap[e.user_id] || 'Unknown' }))
       setAllWeeks(weeks || [])
-      setAllSubs(subs || [])
-      setExempted(exs || [])
+      setAllSubs(enrichedSubs)
+      setExempted(enrichedExs)
       // Default history tab to most recent past week
       const past = (weeks || []).filter(w => !w.is_active)
       if (past.length > 0) setSelWeekId(past[0].id)
@@ -698,7 +705,7 @@ function Leaderboard() {
 
   const allTime = Object.values(
     allSubs.reduce((acc, s) => {
-      const name = s.profiles?.full_name || 'Unknown'
+      const name = s.full_name || 'Unknown'
       if (!acc[s.user_id]) acc[s.user_id] = { name, totalPts:0, weeks:0, perfects:0 }
       acc[s.user_id].totalPts += s.score
       acc[s.user_id].weeks++
@@ -755,7 +762,7 @@ function Leaderboard() {
                 ? <p style={{ color:'var(--dust)', textAlign:'center', padding:'2rem' }}>No submissions yet this week.</p>
                 : <div style={{ display:'flex', flexDirection:'column', gap:'0.625rem' }}>
                     {subsForWeek(currentWeek.id).map((s,i) => (
-                      <LbRow key={s.user_id} rank={i+1} name={s.profiles?.full_name||'Unknown'}
+                      <LbRow key={s.user_id} rank={i+1} name={s.full_name||'Unknown'}
                         sub={new Date(s.submitted_at).toLocaleDateString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}
                         right={<>
                           <p style={{ fontWeight:700, fontSize:'1.2rem', color:s.score===s.total?'var(--safe)':'var(--chalk)', margin:0 }}>{s.score}/{s.total}</p>
@@ -764,7 +771,7 @@ function Leaderboard() {
                       />
                     ))}
                     {exemptedForWeek(currentWeek.id).map(ex => (
-                      <LbRow key={ex.id} name={ex.profiles?.full_name||'?'} sub={ex.reason} dimmed
+                      <LbRow key={ex.id} name={ex.full_name||'?'} sub={ex.reason} dimmed
                         right={<span style={{ fontSize:'0.78rem', color:'var(--vein)', fontWeight:700, fontFamily:'monospace' }}>Exempted</span>}
                       />
                     ))}
@@ -800,7 +807,7 @@ function Leaderboard() {
                     ? <p style={{ color:'var(--dust)', textAlign:'center', padding:'2rem' }}>No submissions for this week.</p>
                     : <div style={{ display:'flex', flexDirection:'column', gap:'0.625rem' }}>
                         {subsForWeek(selectedWeek.id).map((s,i) => (
-                          <LbRow key={s.user_id} rank={i+1} name={s.profiles?.full_name||'Unknown'}
+                          <LbRow key={s.user_id} rank={i+1} name={s.full_name||'Unknown'}
                             sub={new Date(s.submitted_at).toLocaleDateString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}
                             right={<>
                               <p style={{ fontWeight:700, fontSize:'1.2rem', color:s.score===s.total?'var(--safe)':'var(--chalk)', margin:0 }}>{s.score}/{s.total}</p>
@@ -809,7 +816,7 @@ function Leaderboard() {
                           />
                         ))}
                         {exemptedForWeek(selectedWeek.id).map(ex => (
-                          <LbRow key={ex.id} name={ex.profiles?.full_name||'?'} sub={ex.reason} dimmed
+                          <LbRow key={ex.id} name={ex.full_name||'?'} sub={ex.reason} dimmed
                             right={<span style={{ fontSize:'0.78rem', color:'var(--vein)', fontWeight:700, fontFamily:'monospace' }}>Exempted</span>}
                           />
                         ))}
@@ -1022,7 +1029,7 @@ function AdminPanel({ notify }) {
           {pending.map(ex => (
             <div key={ex.id} style={{ padding:'12px 0', borderBottom:'1px solid var(--slate)', display:'flex', alignItems:'flex-start', gap:'1rem', flexWrap:'wrap' }}>
               <div style={{ flex:1 }}>
-                <p style={{ fontWeight:600, color:'var(--chalk)', margin:'0 0 2px' }}>{ex.profiles?.full_name}</p>
+                <p style={{ fontWeight:600, color:'var(--chalk)', margin:'0 0 2px' }}>{ex.full_name}</p>
                 <p style={{ fontSize:'0.78rem', color:'var(--dust)', fontFamily:'monospace', margin:'0 0 4px' }}>
                   Week {ex.quiz_weeks?.week_number} — {ex.quiz_weeks?.title}
                 </p>
