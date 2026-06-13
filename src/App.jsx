@@ -653,124 +653,186 @@ function ResultsView({ answers, questions, score, onDashboard, onLeaderboard }) 
 // LEADERBOARD
 // ════════════════════════════════════════════════════════════════
 function Leaderboard() {
-  const [tab,      setTab]     = useState('week')
-  const [data,     setData]    = useState([])
-  const [week,     setWeek]    = useState(null)
-  const [exempted, setExempted]= useState([])
-  const [loading,  setLoading] = useState(true)
+  const [tab,       setTab]      = useState('current')
+  const [allSubs,   setAllSubs]  = useState([])
+  const [allWeeks,  setAllWeeks] = useState([])
+  const [exempted,  setExempted] = useState([])
+  const [selWeekId, setSelWeekId]= useState(null)
+  const [loading,   setLoading]  = useState(true)
 
   useEffect(() => {
     (async () => {
-      // Fetch most recent active week
-      const { data:weeks } = await supabase.from('quiz_weeks')
-        .select('id,week_number,title').eq('is_active',true)
-        .order('week_number',{ ascending:false }).limit(1)
-      const currentWeek = weeks?.[0] || null
-      setWeek(currentWeek)
-
-      const [{ data:subs }, { data:exs }] = await Promise.all([
+      const [{ data:weeks }, { data:subs }, { data:exs }] = await Promise.all([
+        supabase.from('quiz_weeks')
+          .select('id,week_number,title,is_active')
+          .order('week_number', { ascending:false }),
         supabase.from('quiz_submissions')
           .select('user_id,week_id,score,total,submitted_at,profiles(full_name)')
-          .order('score',{ ascending:false }),
+          .order('score', { ascending:false }),
         supabase.from('quiz_exemptions')
-          .select('id,user_id,week_id,reason,status,profiles(full_name)')
+          .select('id,user_id,week_id,reason,profiles(full_name)')
           .eq('status','approved')
       ])
-      setData(subs || [])
+      setAllWeeks(weeks || [])
+      setAllSubs(subs || [])
       setExempted(exs || [])
+      // Default history tab to most recent past week
+      const past = (weeks || []).filter(w => !w.is_active)
+      if (past.length > 0) setSelWeekId(past[0].id)
       setLoading(false)
     })()
   }, [])
 
   if (loading) return <Loader text="Loading leaderboard…" inline />
 
-  const weekSubs = week ? data.filter(s => s.week_id===week.id)
-    .sort((a,b) => b.score-a.score || new Date(a.submitted_at)-new Date(b.submitted_at)) : []
-  const exemptedThisWeek = week ? exempted.filter(e => e.week_id===week.id) : []
+  const currentWeek  = allWeeks.find(w => w.is_active) || null
+  const pastWeeks    = allWeeks.filter(w => !w.is_active)
+  const selectedWeek = allWeeks.find(w => w.id === selWeekId) || pastWeeks[0] || null
 
-  // All-time: sum scores per user
+  const subsForWeek = (weekId) =>
+    allSubs.filter(s => s.week_id === weekId)
+      .sort((a,b) => b.score - a.score || new Date(a.submitted_at) - new Date(b.submitted_at))
+
+  const exemptedForWeek = (weekId) =>
+    exempted.filter(e => e.week_id === weekId)
+
   const allTime = Object.values(
-    data.reduce((acc,s) => {
+    allSubs.reduce((acc, s) => {
       const name = s.profiles?.full_name || 'Unknown'
       if (!acc[s.user_id]) acc[s.user_id] = { name, totalPts:0, weeks:0, perfects:0 }
       acc[s.user_id].totalPts += s.score
       acc[s.user_id].weeks++
-      if (s.score===s.total) acc[s.user_id].perfects++
+      if (s.score === s.total) acc[s.user_id].perfects++
       return acc
     }, {})
-  ).sort((a,b) => b.totalPts-a.totalPts||b.perfects-a.perfects)
+  ).sort((a,b) => b.totalPts - a.totalPts || b.perfects - a.perfects)
+
+  const tabs = [
+    { id:'current',  label:'This week' },
+    { id:'history',  label:'Past weeks' },
+    { id:'alltime',  label:'All-time' },
+  ]
+
+  const LbRow = ({ rank, name, right, sub, dimmed }) => (
+    <div style={{ display:'flex', alignItems:'center', gap:12, padding:'12px 16px',
+      background:'var(--stone)', border:'1px solid', borderRadius:10, opacity: dimmed ? 0.6 : 1,
+      borderColor: rank === 1 && !dimmed ? 'var(--ore)' : 'var(--slate)' }}>
+      <span style={{ fontSize:'1.1rem', fontWeight:800, minWidth:24, textAlign:'center',
+        color: rank === 1 && !dimmed ? 'var(--ore)' : 'var(--dust)' }}>{dimmed ? '—' : rank}</span>
+      <Avatar name={name} size={36} />
+      <div style={{ flex:1 }}>
+        <p style={{ fontWeight:600, color:'var(--chalk)', margin:0 }}>{name}</p>
+        {sub && <p style={{ fontSize:'0.75rem', color:'var(--dust)', fontFamily:'monospace', margin:0 }}>{sub}</p>}
+      </div>
+      <div style={{ textAlign:'right' }}>{right}</div>
+    </div>
+  )
 
   return (
     <>
       <SLabel>Leaderboard</SLabel>
       <div style={{ display:'flex', gap:6, marginBottom:'1.25rem' }}>
-        {['week','alltime'].map(t => (
-          <button key={t} style={{ flex:1, padding:'8px', background:tab===t?'var(--stone)':'transparent',
-            border:'1px solid', borderColor:tab===t?'var(--slate)':'var(--rock)', borderRadius:8,
-            color:tab===t?'var(--chalk)':'var(--dust)', fontFamily:'Syne,sans-serif', fontWeight:600,
-            fontSize:'0.85rem', cursor:'pointer' }}
-            onClick={() => setTab(t)}>
-            {t==='week' ? (week ? 'This week — ' + week.title : 'This week') : 'All-time'}
+        {tabs.map(t => (
+          <button key={t.id} onClick={() => setTab(t.id)}
+            style={{ flex:1, padding:'8px', background:tab===t.id?'var(--stone)':'transparent',
+              border:'1px solid', borderColor:tab===t.id?'var(--slate)':'var(--rock)', borderRadius:8,
+              color:tab===t.id?'var(--chalk)':'var(--dust)', fontFamily:'Syne,sans-serif',
+              fontWeight:600, fontSize:'0.82rem', cursor:'pointer' }}>
+            {t.label}
           </button>
         ))}
       </div>
 
-      {tab==='week' && (
-        weekSubs.length===0
-          ? <p style={{ color:'var(--dust)', textAlign:'center', padding:'2rem' }}>No submissions this week yet.</p>
-          : <div style={{ display:'flex', flexDirection:'column', gap:'0.625rem' }}>
-              {exemptedThisWeek.map(ex => (
-                <div key={ex.id} style={{ display:'flex', alignItems:'center', gap:12, padding:'12px 16px',
-                  background:'var(--stone)', border:'1px solid var(--vein-dim,#1a4a80)', borderRadius:10, opacity:0.7 }}>
-                  <span style={{ fontSize:'1.1rem', fontWeight:800, color:'var(--dust)', minWidth:24, textAlign:'center' }}>—</span>
-                  <Avatar name={ex.profiles?.full_name||'?'} size={36} />
-                  <div style={{ flex:1 }}>
-                    <p style={{ fontWeight:600, color:'var(--chalk)', margin:0 }}>{ex.profiles?.full_name}</p>
-                    <p style={{ fontSize:'0.75rem', color:'var(--dust)', fontFamily:'monospace', margin:0 }}>{ex.reason}</p>
+      {/* ── THIS WEEK ── */}
+      {tab === 'current' && (
+        !currentWeek
+          ? <p style={{ color:'var(--dust)', textAlign:'center', padding:'2rem' }}>No active week yet.</p>
+          : <>
+              <p style={{ color:'var(--dust)', fontFamily:'monospace', fontSize:'0.8rem', marginBottom:'1rem' }}>
+                Week {currentWeek.week_number} — {currentWeek.title}
+              </p>
+              {subsForWeek(currentWeek.id).length === 0 && exemptedForWeek(currentWeek.id).length === 0
+                ? <p style={{ color:'var(--dust)', textAlign:'center', padding:'2rem' }}>No submissions yet this week.</p>
+                : <div style={{ display:'flex', flexDirection:'column', gap:'0.625rem' }}>
+                    {subsForWeek(currentWeek.id).map((s,i) => (
+                      <LbRow key={s.user_id} rank={i+1} name={s.profiles?.full_name||'Unknown'}
+                        sub={new Date(s.submitted_at).toLocaleDateString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}
+                        right={<>
+                          <p style={{ fontWeight:700, fontSize:'1.2rem', color:s.score===s.total?'var(--safe)':'var(--chalk)', margin:0 }}>{s.score}/{s.total}</p>
+                          {s.score===s.total && <p style={{ fontSize:'0.7rem', color:'var(--safe)', fontFamily:'monospace', margin:0 }}>perfect</p>}
+                        </>}
+                      />
+                    ))}
+                    {exemptedForWeek(currentWeek.id).map(ex => (
+                      <LbRow key={ex.id} name={ex.profiles?.full_name||'?'} sub={ex.reason} dimmed
+                        right={<span style={{ fontSize:'0.78rem', color:'var(--vein)', fontWeight:700, fontFamily:'monospace' }}>Exempted</span>}
+                      />
+                    ))}
                   </div>
-                  <span style={{ fontSize:'0.78rem', color:'var(--vein)', fontWeight:700, fontFamily:'monospace' }}>Exempted</span>
-                </div>
-              ))}
-              {weekSubs.map((s,i) => (
-                <div key={s.user_id} style={{ display:'flex', alignItems:'center', gap:12, padding:'12px 16px',
-                  background:'var(--stone)', border:'1px solid', borderColor:i===0?'var(--ore)':'var(--slate)', borderRadius:10 }}>
-                  <span style={{ fontSize:'1.1rem', fontWeight:800, color:i===0?'var(--ore)':'var(--dust)', minWidth:24, textAlign:'center' }}>{i+1}</span>
-                  <Avatar name={s.profiles?.full_name||'?'} size={36} />
-                  <div style={{ flex:1 }}>
-                    <p style={{ fontWeight:600, color:'var(--chalk)', margin:0 }}>{s.profiles?.full_name||'Unknown'}</p>
-                    <p style={{ fontSize:'0.75rem', color:'var(--dust)', fontFamily:'monospace', margin:0 }}>
-                      {new Date(s.submitted_at).toLocaleDateString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}
-                    </p>
-                  </div>
-                  <div style={{ textAlign:'right' }}>
-                    <p style={{ fontWeight:700, fontSize:'1.2rem', color:s.score===s.total?'var(--safe)':'var(--chalk)', margin:0 }}>{s.score}/{s.total}</p>
-                    {s.score===s.total && <p style={{ fontSize:'0.7rem', color:'var(--safe)', fontFamily:'monospace', margin:0 }}>perfect</p>}
-                  </div>
-                </div>
-              ))}
-            </div>
+              }
+            </>
       )}
 
-      {tab==='alltime' && (
-        allTime.length===0
+      {/* ── PAST WEEKS ── */}
+      {tab === 'history' && (
+        pastWeeks.length === 0
+          ? <p style={{ color:'var(--dust)', textAlign:'center', padding:'2rem' }}>No completed weeks yet.</p>
+          : <>
+              {/* Week selector */}
+              <div style={{ display:'flex', gap:6, flexWrap:'wrap', marginBottom:'1.25rem' }}>
+                {pastWeeks.map(w => (
+                  <button key={w.id} onClick={() => setSelWeekId(w.id)}
+                    style={{ padding:'6px 14px', borderRadius:20, border:'1px solid',
+                      borderColor: selWeekId===w.id ? 'var(--ore)' : 'var(--slate)',
+                      background: selWeekId===w.id ? 'rgba(232,160,32,0.12)' : 'transparent',
+                      color: selWeekId===w.id ? 'var(--ore)' : 'var(--dust)',
+                      fontFamily:'Syne,sans-serif', fontWeight:600, fontSize:'0.8rem', cursor:'pointer' }}>
+                    Week {w.week_number}
+                  </button>
+                ))}
+              </div>
+              {selectedWeek && (
+                <>
+                  <p style={{ color:'var(--dust)', fontFamily:'monospace', fontSize:'0.8rem', marginBottom:'1rem' }}>
+                    Week {selectedWeek.week_number} — {selectedWeek.title}
+                  </p>
+                  {subsForWeek(selectedWeek.id).length === 0
+                    ? <p style={{ color:'var(--dust)', textAlign:'center', padding:'2rem' }}>No submissions for this week.</p>
+                    : <div style={{ display:'flex', flexDirection:'column', gap:'0.625rem' }}>
+                        {subsForWeek(selectedWeek.id).map((s,i) => (
+                          <LbRow key={s.user_id} rank={i+1} name={s.profiles?.full_name||'Unknown'}
+                            sub={new Date(s.submitted_at).toLocaleDateString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}
+                            right={<>
+                              <p style={{ fontWeight:700, fontSize:'1.2rem', color:s.score===s.total?'var(--safe)':'var(--chalk)', margin:0 }}>{s.score}/{s.total}</p>
+                              {s.score===s.total && <p style={{ fontSize:'0.7rem', color:'var(--safe)', fontFamily:'monospace', margin:0 }}>perfect</p>}
+                            </>}
+                          />
+                        ))}
+                        {exemptedForWeek(selectedWeek.id).map(ex => (
+                          <LbRow key={ex.id} name={ex.profiles?.full_name||'?'} sub={ex.reason} dimmed
+                            right={<span style={{ fontSize:'0.78rem', color:'var(--vein)', fontWeight:700, fontFamily:'monospace' }}>Exempted</span>}
+                          />
+                        ))}
+                      </div>
+                  }
+                </>
+              )}
+            </>
+      )}
+
+      {/* ── ALL-TIME ── */}
+      {tab === 'alltime' && (
+        allTime.length === 0
           ? <p style={{ color:'var(--dust)', textAlign:'center', padding:'2rem' }}>No scores yet.</p>
           : <div style={{ display:'flex', flexDirection:'column', gap:'0.625rem' }}>
               {allTime.map((p,i) => (
-                <div key={p.name} style={{ display:'flex', alignItems:'center', gap:12, padding:'12px 16px',
-                  background:'var(--stone)', border:'1px solid', borderColor:i===0?'var(--ore)':'var(--slate)', borderRadius:10 }}>
-                  <span style={{ fontSize:'1.1rem', fontWeight:800, color:i===0?'var(--ore)':'var(--dust)', minWidth:24, textAlign:'center' }}>{i+1}</span>
-                  <Avatar name={p.name} size={36} />
-                  <div style={{ flex:1 }}>
-                    <p style={{ fontWeight:600, color:'var(--chalk)', margin:0 }}>{p.name}</p>
-                    <p style={{ fontSize:'0.75rem', color:'var(--dust)', fontFamily:'monospace', margin:0 }}>
-                      {p.weeks} week{p.weeks!==1?'s':''} · {p.perfects} perfect{p.perfects!==1?'s':''}
-                    </p>
-                  </div>
-                  <div style={{ textAlign:'right' }}>
+                <LbRow key={p.name} rank={i+1} name={p.name}
+                  sub={`${p.weeks} week${p.weeks!==1?'s':''} · ${p.perfects} perfect${p.perfects!==1?'s':''}`}
+                  right={<>
                     <p style={{ fontWeight:700, fontSize:'1.2rem', color:'var(--ore)', margin:0 }}>{p.totalPts}</p>
-                    <p style={{ fontSize:'0.7rem', color:'var(--dust)', fontFamily:'monospace', margin:0 }}>pts</p>
-                  </div>
-                </div>
+                    <p style={{ fontSize:'0.7rem', color:'var(--dust)', fontFamily:'monospace', margin:0 }}>total pts</p>
+                  </>}
+                />
               ))}
             </div>
       )}
