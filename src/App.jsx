@@ -725,8 +725,8 @@ function Leaderboard() {
           .select('id,week_number,title,is_active')
           .order('week_number', { ascending:false }),
         supabase.from('quiz_submissions')
-          .select('user_id,week_id,score,total,submitted_at')
-          .order('score', { ascending:false }),
+          .select('user_id,week_id,score,total,submitted_at,accuracy_points,speed_bonus,total_points')
+          .order('total_points', { ascending:false }),
         supabase.from('quiz_exemptions')
           .select('id,user_id,week_id,reason')
           .eq('status','approved'),
