@@ -325,7 +325,7 @@ function Dashboard({ profile, setView, setViewingPdf, notify }) {
 
   useEffect(() => {
     Promise.all([
-      supabase.from('quiz_weeks').select('id,week_number,title,topic_hint,questions,is_active,deadline,created_at').eq('is_active',true).order('week_number', { ascending:false }),
+      supabase.from('quiz_weeks').select('id,week_number,title,topic_hint,questions,is_active,deadline,pdf_path,created_at').eq('is_active',true).order('week_number', { ascending:false }),
       supabase.from('quiz_submissions').select('week_id').eq('user_id', profile?.id || ''),
       supabase.from('quiz_exemptions').select('week_id,status').eq('user_id', profile?.id || '')
     ]).then(([{ data:w }, { data:s }, { data:e }]) => {
