@@ -108,7 +108,7 @@ export default function App() {
   if (session === undefined) return <Loader text="Loading…" />
   if (!session) return <AuthScreen notify={notify} />
 
-  if (viewingPdf) return <PdfViewer b64={viewingPdf} onClose={() => setViewingPdf(null)} />
+  if (viewingPdf) return <PdfViewer src={viewingPdf} onClose={() => setViewingPdf(null)} />
 
   return (
     <div style={{ minHeight:'100vh' }}>
@@ -282,31 +282,35 @@ function TopNav({ profile, view, setView, onSignOut }) {
 // ════════════════════════════════════════════════════════════════
 // DASHBOARD
 // ════════════════════════════════════════════════════════════════
-function FetchPdfBtn({ weekId, onView, label='Read report' }) {
+function FetchPdfBtn({ weekId, pdfPath, onView, label='Read report' }) {
   const [loading, setLoading] = useState(false)
-  const [hasPdf,  setHasPdf]  = useState(null) // null=unknown, true/false
 
-  useEffect(() => {
-    // Check if PDF exists without fetching full data
-    supabase.from('quiz_weeks')
-      .select('pdf_path')
-      .eq('id', weekId)
-      .single()
-      .then(({ data }) => setHasPdf(!!data?.pdf_path))
-  }, [weekId])
+  // pdfPath is the storage path e.g. "week-uuid.pdf"
+  // For legacy rows that stored base64 in pdf_path, we detect by checking if it starts with 'week-'
+  if (!pdfPath) return null
 
-  if (hasPdf === false) return null
-
-  const fetch = async () => {
+  const open = async () => {
     setLoading(true)
-    const { data } = await supabase.from('quiz_weeks')
-      .select('pdf_path').eq('id', weekId).single()
-    if (data?.pdf_path) onView(data.pdf_path)
+    try {
+      if (pdfPath.startsWith('week-')) {
+        // New storage-based PDF — get a signed URL
+        const { data, error } = await supabase.storage
+          .from('quiz-reports')
+          .createSignedUrl(pdfPath, 60 * 60) // 1 hour
+        if (error) throw error
+        onView({ type: 'url', url: data.signedUrl })
+      } else {
+        // Legacy base64 stored directly — fetch it
+        const { data } = await supabase.from('quiz_weeks')
+          .select('pdf_path').eq('id', weekId).single()
+        if (data?.pdf_path) onView({ type: 'b64', data: data.pdf_path })
+      }
+    } catch (e) { console.error('PDF load error:', e) }
     setLoading(false)
   }
 
   return (
-    <Btn ghost sm onClick={fetch} disabled={loading}>
+    <Btn ghost sm onClick={open} disabled={loading}>
       {loading ? <><Spin /> Loading…</> : <><EyeIcon /> {label}</>}
     </Btn>
   )
@@ -365,7 +369,7 @@ function Dashboard({ profile, setView, setViewingPdf, notify }) {
                 </p>
               </div>
               <div style={{ display:'flex', gap:8, flexWrap:'wrap', alignItems:'center' }}>
-                <FetchPdfBtn weekId={currentWeek.id} onView={setViewingPdf} />
+                <FetchPdfBtn weekId={currentWeek.id} pdfPath={currentWeek.pdf_path} onView={setViewingPdf} />
                 {(() => {
                   const ex = exemptions.find(e => e.week_id === currentWeek.id)
                   const isPastDeadline = currentWeek.deadline && new Date() > new Date(currentWeek.deadline)
@@ -416,7 +420,7 @@ function Dashboard({ profile, setView, setViewingPdf, notify }) {
                     <p style={{ fontWeight:600, color:'var(--chalk)', margin:'2px 0' }}>{w.title}</p>
                   </div>
                   <div style={{ display:'flex', gap:8, alignItems:'center' }}>
-                    <FetchPdfBtn weekId={w.id} onView={setViewingPdf} label="Read" />
+                    <FetchPdfBtn weekId={w.id} pdfPath={w.pdf_path} onView={setViewingPdf} label="Read" />
                     {isDone
                       ? <span style={{ fontSize:'0.82rem', color:'var(--safe)', fontWeight:700 }}>✓ Done</span>
                       : <Btn primary sm onClick={() => setView('quiz')}>Take quiz</Btn>}
@@ -1027,14 +1031,26 @@ function AdminPanel({ notify }) {
       setStatus('Claude is generating questions…')
       const questions = await generateQuestions(b64, isPdf, qCount, hint)
 
-      // Store PDF as base64 in the pdf_path column (for small PDFs < 1MB)
-      // For production you'd upload to Supabase Storage instead
       const weekNum = (weeks[0]?.week_number || 0) + 1
+
+      // Upload PDF to Supabase Storage
+      let storagePath = null
+      if (isPdf) {
+        setStatus('Uploading PDF to storage…')
+        const weekId = crypto.randomUUID()
+        storagePath = `week-${weekId}.pdf`
+        const pdfBytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0))
+        const { error: uploadError } = await supabase.storage
+          .from('quiz-reports')
+          .upload(storagePath, pdfBytes, { contentType: 'application/pdf', upsert: false })
+        if (uploadError) throw new Error('PDF upload failed: ' + uploadError.message)
+      }
+
       const { error } = await supabase.from('quiz_weeks').insert({
         week_number: weekNum,
         title: title.trim(),
         topic_hint: hint.trim() || null,
-        pdf_path: isPdf ? b64 : null,
+        pdf_path: storagePath,
         questions,
         deadline: deadline || null,
         is_active: true
@@ -1323,20 +1339,26 @@ function ProfileView({ profile, setProfile, notify }) {
 // ════════════════════════════════════════════════════════════════
 // PDF VIEWER
 // ════════════════════════════════════════════════════════════════
-function PdfViewer({ b64, onClose }) {
+function PdfViewer({ src, onClose }) {
+  // src: { type: 'url', url: '...' } | { type: 'b64', data: '...' }
   const [blobUrl, setBlobUrl] = useState(null)
   const [error,   setError]   = useState(null)
 
   useEffect(() => {
     try {
-      if (!b64 || b64.length < 10) { setError('No PDF data available for this report.'); return }
-      const url = b64ToBlobUrl(b64)
-      setBlobUrl(url)
-      return () => URL.revokeObjectURL(url)
+      if (!src) { setError('No PDF data available.'); return }
+      if (src.type === 'url') {
+        setBlobUrl(src.url)
+      } else if (src.type === 'b64') {
+        if (!src.data || src.data.length < 10) { setError('No PDF data available for this report.'); return }
+        const url = b64ToBlobUrl(src.data)
+        setBlobUrl(url)
+        return () => URL.revokeObjectURL(url)
+      }
     } catch (e) {
       setError('Could not load PDF: ' + e.message)
     }
-  }, [b64])
+  }, [src])
 
   useEffect(() => {
     const handler = e => {
