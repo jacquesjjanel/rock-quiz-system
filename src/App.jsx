@@ -282,6 +282,36 @@ function TopNav({ profile, view, setView, onSignOut }) {
 // ════════════════════════════════════════════════════════════════
 // DASHBOARD
 // ════════════════════════════════════════════════════════════════
+function FetchPdfBtn({ weekId, onView, label='Read report' }) {
+  const [loading, setLoading] = useState(false)
+  const [hasPdf,  setHasPdf]  = useState(null) // null=unknown, true/false
+
+  useEffect(() => {
+    // Check if PDF exists without fetching full data
+    supabase.from('quiz_weeks')
+      .select('pdf_path')
+      .eq('id', weekId)
+      .single()
+      .then(({ data }) => setHasPdf(!!data?.pdf_path))
+  }, [weekId])
+
+  if (hasPdf === false) return null
+
+  const fetch = async () => {
+    setLoading(true)
+    const { data } = await supabase.from('quiz_weeks')
+      .select('pdf_path').eq('id', weekId).single()
+    if (data?.pdf_path) onView(data.pdf_path)
+    setLoading(false)
+  }
+
+  return (
+    <Btn ghost sm onClick={fetch} disabled={loading}>
+      {loading ? <><Spin /> Loading…</> : <><EyeIcon /> {label}</>}
+    </Btn>
+  )
+}
+
 function Dashboard({ profile, setView, setViewingPdf, notify }) {
   const [weeks,       setWeeks]       = useState([])
   const [submissions, setSubmissions] = useState([])
@@ -291,7 +321,7 @@ function Dashboard({ profile, setView, setViewingPdf, notify }) {
 
   useEffect(() => {
     Promise.all([
-      supabase.from('quiz_weeks').select('id,week_number,title,topic_hint,questions,is_active,deadline,pdf_path,created_at').eq('is_active',true).order('week_number', { ascending:false }),
+      supabase.from('quiz_weeks').select('id,week_number,title,topic_hint,questions,is_active,deadline,created_at').eq('is_active',true).order('week_number', { ascending:false }),
       supabase.from('quiz_submissions').select('week_id').eq('user_id', profile?.id || ''),
       supabase.from('quiz_exemptions').select('week_id,status').eq('user_id', profile?.id || '')
     ]).then(([{ data:w }, { data:s }, { data:e }]) => {
@@ -335,11 +365,7 @@ function Dashboard({ profile, setView, setViewingPdf, notify }) {
                 </p>
               </div>
               <div style={{ display:'flex', gap:8, flexWrap:'wrap', alignItems:'center' }}>
-                {currentWeek.pdf_path && (
-                  <Btn ghost sm onClick={() => setViewingPdf(currentWeek.pdf_path)}>
-                    <EyeIcon /> Read report
-                  </Btn>
-                )}
+                <FetchPdfBtn weekId={currentWeek.id} onView={setViewingPdf} />
                 {(() => {
                   const ex = exemptions.find(e => e.week_id === currentWeek.id)
                   const isPastDeadline = currentWeek.deadline && new Date() > new Date(currentWeek.deadline)
@@ -390,7 +416,7 @@ function Dashboard({ profile, setView, setViewingPdf, notify }) {
                     <p style={{ fontWeight:600, color:'var(--chalk)', margin:'2px 0' }}>{w.title}</p>
                   </div>
                   <div style={{ display:'flex', gap:8, alignItems:'center' }}>
-                    {w.pdf_path && <Btn ghost sm onClick={() => setViewingPdf(w.pdf_path)}><EyeIcon /> Read</Btn>}
+                    <FetchPdfBtn weekId={w.id} onView={setViewingPdf} label="Read" />
                     {isDone
                       ? <span style={{ fontSize:'0.82rem', color:'var(--safe)', fontWeight:700 }}>✓ Done</span>
                       : <Btn primary sm onClick={() => setView('quiz')}>Take quiz</Btn>}
