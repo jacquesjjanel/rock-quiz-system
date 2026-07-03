@@ -418,12 +418,18 @@ function Dashboard({ profile, setView, setViewingPdf, notify }) {
                   <div style={{ flex:1 }}>
                     <span style={{ fontSize:'0.7rem', color:'var(--ore)', fontFamily:'monospace', fontWeight:700 }}>Week {w.week_number}</span>
                     <p style={{ fontWeight:600, color:'var(--chalk)', margin:'2px 0' }}>{w.title}</p>
+                    {w.deadline && <p style={{ fontSize:'0.72rem', color:'var(--seam)', fontFamily:'monospace', margin:'2px 0 0' }}>
+                      Deadline: {new Date(w.deadline).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'})}
+                    </p>}
                   </div>
                   <div style={{ display:'flex', gap:8, alignItems:'center' }}>
                     <FetchPdfBtn weekId={w.id} pdfPath={w.pdf_path} onView={setViewingPdf} label="Read" />
                     {isDone
                       ? <span style={{ fontSize:'0.82rem', color:'var(--safe)', fontWeight:700 }}>✓ Done</span>
-                      : <Btn primary sm onClick={() => setView('quiz')}>Take quiz</Btn>}
+                      : w.deadline && new Date() > new Date(w.deadline)
+                        ? <span style={{ fontSize:'0.82rem', color:'var(--fault)', fontWeight:700 }}>⏰ Closed</span>
+                        : <Btn primary sm onClick={() => setView('quiz')}>Take quiz</Btn>
+                    }
                   </div>
                 </div>
               )
@@ -743,7 +749,7 @@ function Leaderboard() {
     (async () => {
       const [{ data:weeks }, { data:subs }, { data:exs }, { data:profs }] = await Promise.all([
         supabase.from('quiz_weeks')
-          .select('id,week_number,title,is_active')
+          .select('id,week_number,title,is_active,deadline')
           .order('week_number', { ascending:false }),
         supabase.from('quiz_submissions')
           .select('user_id,week_id,score,total,submitted_at,accuracy_points,speed_bonus,total_points')
@@ -776,7 +782,7 @@ function Leaderboard() {
   if (loading) return <Loader text="Loading leaderboard…" inline />
 
   const currentWeek  = allWeeks.find(w => w.is_active) || null
-  const pastWeeks    = allWeeks.filter(w => !w.is_active)
+  const pastWeeks    = allWeeks.filter(w => !w.is_active || (w.deadline && new Date() > new Date(w.deadline)))
   const selectedWeek = allWeeks.find(w => w.id === selWeekId) || pastWeeks[0] || null
 
   const subsForWeek = (weekId) =>
@@ -1045,6 +1051,9 @@ function AdminPanel({ notify }) {
           .upload(storagePath, pdfBytes, { contentType: 'application/pdf', upsert: false })
         if (uploadError) throw new Error('PDF upload failed: ' + uploadError.message)
       }
+
+      // Deactivate all previous weeks before inserting the new one
+      await supabase.from('quiz_weeks').update({ is_active: false }).neq('id', 'none')
 
       const { error } = await supabase.from('quiz_weeks').insert({
         week_number: weekNum,
