@@ -1085,6 +1085,75 @@ function AdminPanel({ notify }) {
     loadWeeks()
   }
 
+  const [downloading, setDownloading] = useState(false)
+
+  const downloadReport = async () => {
+    setDownloading(true)
+    try {
+      // Fetch all data needed for the report
+      const [{ data: allWeeks }, { data: allSubs }, { data: allExemptions }, { data: allProfiles }] = await Promise.all([
+        supabase.from('quiz_weeks').select('id,week_number,title,deadline,is_active').order('week_number'),
+        supabase.from('quiz_submissions').select('user_id,week_id,score,total,accuracy_points,speed_bonus,total_points,submitted_at'),
+        supabase.from('quiz_exemptions').select('user_id,week_id,reason,status'),
+        supabase.from('profiles').select('id,full_name,is_hidden').eq('is_hidden', false)
+      ])
+
+      const profileMap = (allProfiles||[]).reduce((acc,p) => { acc[p.id] = p.full_name; return acc }, {})
+      const weekMap    = (allWeeks||[]).reduce((acc,w) => { acc[w.id] = w; return acc }, {})
+
+      let csv = 'Week,Report Title,Deadline,Player,Status,Score,Total,Accuracy Pts,Speed Bonus,Total Pts,Submitted At
+'
+
+      for (const week of (allWeeks||[])) {
+        const weekSubs = (allSubs||[]).filter(s => s.week_id === week.id)
+        const weekExs  = (allExemptions||[]).filter(e => e.week_id === week.id && e.status === 'approved')
+        const deadline = week.deadline ? new Date(week.deadline).toLocaleDateString('en-GB') : 'No deadline'
+
+        // Submitted players
+        for (const sub of weekSubs) {
+          const name = profileMap[sub.user_id] || 'Unknown'
+          const isExempt = weekExs.some(e => e.user_id === sub.user_id)
+          const status = isExempt ? 'Exempted (base pts)' : 'Submitted'
+          const submittedAt = sub.submitted_at ? new Date(sub.submitted_at).toLocaleString('en-GB') : ''
+          csv += `${week.week_number},"${week.title}","${deadline}","${name}","${status}",${sub.score},${sub.total},${sub.accuracy_points||0},${sub.speed_bonus||0},${sub.total_points||0},"${submittedAt}"
+`
+        }
+
+        // Exempted but no submission
+        for (const ex of weekExs) {
+          const hasSub = weekSubs.some(s => s.user_id === ex.user_id)
+          if (!hasSub) {
+            const name = profileMap[ex.user_id] || 'Unknown'
+            csv += `${week.week_number},"${week.title}","${deadline}","${name}","Exempted (no sub)",,,,,,
+`
+          }
+        }
+
+        // Players who neither submitted nor were exempted
+        for (const p of (allProfiles||[])) {
+          const hasSub = weekSubs.some(s => s.user_id === p.id)
+          const hasEx  = weekExs.some(e => e.user_id === p.id)
+          if (!hasSub && !hasEx) {
+            csv += `${week.week_number},"${week.title}","${deadline}","${p.full_name}","Not submitted",,,,,,
+`
+          }
+        }
+      }
+
+      // Trigger CSV download
+      const blob = new Blob([csv], { type: 'text/csv' })
+      const url  = URL.createObjectURL(blob)
+      const a    = document.createElement('a')
+      a.href     = url
+      a.download = `quiz-report-${new Date().toISOString().slice(0,10)}.csv`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch (e) {
+      notify('Download failed: ' + e.message, 'err')
+    }
+    setDownloading(false)
+  }
+
   const extendDeadline = async (id) => {
     const input = prompt('Enter new deadline (YYYY-MM-DDTHH:MM) or leave blank to remove deadline:')
     if (input === null) return // cancelled
@@ -1197,6 +1266,20 @@ function AdminPanel({ notify }) {
 
         <Btn primary onClick={handleUpload} disabled={uploading || !file || !title.trim()} style={{ width:'100%', marginTop:'1rem' }}>
           {uploading ? <><Spin />Generating…</> : '✦ Generate questions & publish'}
+        </Btn>
+      </div>
+
+      {/* Download report */}
+      <SLabel style={{ marginTop:'2rem' }}>Reports</SLabel>
+      <div style={{ ...S.card, display:'flex', alignItems:'center', justifyContent:'space-between', flexWrap:'wrap', gap:'1rem', marginBottom:'2rem' }}>
+        <div>
+          <p style={{ fontWeight:600, color:'var(--chalk)', margin:'0 0 4px' }}>Weekly participation report</p>
+          <p style={{ fontSize:'0.82rem', color:'var(--dust)', margin:0, lineHeight:1.5 }}>
+            Downloads a CSV with every week's breakdown — who submitted, who was exempted, who missed it, and all scores.
+          </p>
+        </div>
+        <Btn primary onClick={downloadReport} disabled={downloading} style={{ flexShrink:0 }}>
+          {downloading ? <><Spin /> Generating…</> : '↓ Download CSV report'}
         </Btn>
       </div>
 
