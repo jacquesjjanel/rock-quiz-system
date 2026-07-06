@@ -1600,3 +1600,4 @@ const S = {
   dropDrag:{ borderColor:'var(--ore)', background:'rgba(232,160,32,0.05)' },
   dropDone:{ borderColor:'var(--vein)', background:'rgba(74,158,255,0.04)', cursor:'default' },
 }
+ 
