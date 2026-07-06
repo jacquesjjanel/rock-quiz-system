@@ -1101,8 +1101,7 @@ function AdminPanel({ notify }) {
       const profileMap = (allProfiles||[]).reduce((acc,p) => { acc[p.id] = p.full_name; return acc }, {})
       const weekMap    = (allWeeks||[]).reduce((acc,w) => { acc[w.id] = w; return acc }, {})
 
-      let csv = 'Week,Report Title,Deadline,Player,Status,Score,Total,Accuracy Pts,Speed Bonus,Total Pts,Submitted At
-'
+      let csv = 'Week,Report Title,Deadline,Player,Status,Score,Total,Accuracy Pts,Speed Bonus,Total Pts,Submitted At\n'
 
       for (const week of (allWeeks||[])) {
         const weekSubs = (allSubs||[]).filter(s => s.week_id === week.id)
